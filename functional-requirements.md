@@ -44,6 +44,14 @@ The platform shall provide mini-courses and learning activities in software engi
 - **FR-20:** The platform shall allow instructors to import students into their courses.
 - **FR-21:** The platform shall allow instructors to view students' participation and engagement in course learning activities.
 
+### 3.5 Learner and Course Workflows
+
+- **FR-22:** The platform shall allow learners to browse available mini-courses and start a course.
+- **FR-23:** The platform shall allow learners to view their progress and completion status for courses and activities.
+- **FR-24:** The platform shall allow learners to save and revisit a self-directed learning path.
+- **FR-25:** The platform shall allow instructors to save and publish a mini-course after reviewing its content.
+- **FR-26:** The platform shall provide AI-supported learning assistance tailored to a learner's topic or learning goal.
+
 ## 4. Open Details
 
-The requirements establish the expected capabilities but do not prescribe how learners are profiled, how course content is generated or reviewed, which student-import formats are supported, or how participation and engagement are measured. These details should be defined during design and validation with learners and instructors.
+The requirements establish the expected capabilities but do not prescribe how learners are profiled, how AI-supported learning assistance works, what counts as course or activity completion, which student-import formats are supported, how participation and engagement are measured, or which course publication controls instructors need. These details should be defined during design and validation with learners and instructors.
