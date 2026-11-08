@@ -4,6 +4,16 @@ export interface Profile {
   email: string;
 }
 
+export async function signOut(): Promise<void> {
+  const response = await fetch("/api/v1/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error("Unable to sign out. Please try again.");
+  }
+}
+
 export async function fetchProfile(): Promise<Profile | null> {
   const response = await fetch("/api/v1/auth/me", {
     credentials: "same-origin",
