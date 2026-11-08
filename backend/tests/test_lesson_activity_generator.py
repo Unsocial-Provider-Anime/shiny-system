@@ -95,6 +95,43 @@ class LessonActivityGeneratorTests(unittest.TestCase):
                 self.client,
             )
 
+    def test_generates_requested_format_and_assistance_action(self) -> None:
+        slides = {
+            "presentation_format": "slides-based",
+            "content": {
+                "type": "slides-based",
+                "slides": [
+                    {"title": "The idea", "content": "Assertions check behavior."},
+                    {"title": "An example", "content": "Compare actual and expected."},
+                ],
+            },
+        }
+        self.client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(slides)
+        )
+        module = self.plan.modules[0]
+
+        activity = generate_lesson_activity(
+            "Testing fundamentals",
+            self.plan,
+            module,
+            module.lessons[0],
+            self.client,
+            presentation_format="slides-based",
+            action="answer-question",
+            question="Why do assertions matter?",
+        )
+
+        self.assertEqual(activity.presentation_format, "slides-based")
+        request = json.loads(
+            self.client.chat.completions.create.call_args.kwargs["messages"][1][
+                "content"
+            ]
+        )
+        self.assertEqual(request["action"], "answer-question")
+        self.assertEqual(request["learner_question"], "Why do assertions matter?")
+        self.assertEqual(request["requested_format"], "slides-based")
+
     def test_rejects_truncated_activity_response(self) -> None:
         self.client.chat.completions.create.return_value.choices[0].finish_reason = (
             "length"

@@ -171,17 +171,78 @@ export const LessonActivitySchema = z
     id: z.string(),
     session_id: z.string(),
     lesson_id: z.string(),
-    presentation_format: z.literal("text-and-images"),
-    content: z
-      .object({
+    presentation_format: z.enum([
+      "text-and-images",
+      "interactive-simulations",
+      "interactive-role-play-activities",
+      "games",
+      "animations",
+      "slides-based",
+      "online-coding",
+    ]),
+    content: z.discriminatedUnion("type", [
+      z.object({
         type: z.literal("text-and-images"),
         content: z.string(),
         image_descriptions: z.array(z.string()),
-      })
-      .passthrough(),
+      }),
+      z.object({
+        type: z.literal("interactive-simulations"),
+        scenario: z.string(),
+        choices: z.array(z.object({ label: z.string(), consequence: z.string() })),
+        learning_point: z.string(),
+      }),
+      z.object({
+        type: z.literal("interactive-role-play-activities"),
+        scenario: z.string(),
+        learner_role: z.string(),
+        partner_role: z.string(),
+        opening_prompt: z.string(),
+        response_choices: z.array(
+          z.object({ response: z.string(), feedback: z.string() }),
+        ),
+      }),
+      z.object({
+        type: z.literal("games"),
+        objective: z.string(),
+        instructions: z.string(),
+        challenge: z.string(),
+        choices: z.array(
+          z.object({
+            label: z.string(),
+            is_correct: z.boolean(),
+            feedback: z.string(),
+          }),
+        ),
+      }),
+      z.object({
+        type: z.literal("animations"),
+        scenes: z.array(
+          z.object({
+            title: z.string(),
+            visual_description: z.string(),
+            narration: z.string(),
+          }),
+        ),
+      }),
+      z.object({
+        type: z.literal("slides-based"),
+        slides: z.array(z.object({ title: z.string(), content: z.string() })),
+      }),
+      z.object({
+        type: z.literal("online-coding"),
+        instructions: z.string(),
+        starter_code: z.string(),
+        expected_code: z.string(),
+        explanation: z.string(),
+      }),
+    ]),
     created_at: z.string(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((activity) => activity.presentation_format === activity.content.type, {
+    message: "Activity format must match its content type.",
+  });
 
 export const QuizInteractionSchema = z
   .object({

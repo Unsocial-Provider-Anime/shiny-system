@@ -8,7 +8,10 @@ from supabase import Client
 
 from app.api.courses import can_access_course, require_user_id
 from app.database.supabase import get_supabase_client
-from app.schemas.activity import LessonActivityResponse
+from app.schemas.activity import (
+    GenerateLessonActivityRequest,
+    LessonActivityResponse,
+)
 from app.schemas.course import CoursePlan
 from app.schemas.interaction import (
     GeneratedQuiz,
@@ -32,11 +35,6 @@ AuthenticatedUser = Annotated[int, Depends(require_user_id)]
 class StartSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     course_id: UUID
-
-
-class GenerateLessonActivityRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    regenerate: bool = False
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
@@ -431,7 +429,12 @@ def create_lesson_activity(
         ),
     )
     existing_activities = _rows(existing_response)
-    if existing_activities and not (payload and payload.regenerate):
+    generation_request = payload or GenerateLessonActivityRequest()
+    if (
+        existing_activities
+        and not generation_request.regenerate
+        and generation_request.action == "teach"
+    ):
         try:
             return LessonActivityResponse.model_validate(
                 existing_activities[0]
@@ -454,6 +457,12 @@ def create_lesson_activity(
             plan,
             target_module,
             target_lesson,
+            presentation_format=(
+                generation_request.presentation_format
+                or target_lesson.suggested_activity.presentation_format
+            ),
+            action=generation_request.action,
+            question=generation_request.question,
         )
     except ProviderConfigurationError as error:
         logger.error("Lesson activity generation is not configured: %s", error)

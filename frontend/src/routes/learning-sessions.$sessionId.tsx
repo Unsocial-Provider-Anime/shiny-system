@@ -7,8 +7,9 @@ import {
   LessonActivitySchema,
   LearningSessionSchema,
   QuizInteractionSchema,
+  type LessonActivity,
 } from "@/lib/api";
-import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { ActivityRenderer } from "@/components/ActivityRenderer";
 
 export const Route = createFileRoute("/learning-sessions/$sessionId")({
   component: LearningSessionPage,
@@ -23,6 +24,7 @@ function LearningSessionPage() {
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
     null,
   );
+  const [learnerQuestion, setLearnerQuestion] = useState("");
   const sessionKey = ["learning-session", sessionId];
   const session = useQuery({
     queryKey: sessionKey,
@@ -149,16 +151,36 @@ function LearningSessionPage() {
     },
   });
   const regenerateActivity = useMutation({
-    mutationFn: (lessonId: string) =>
+    mutationFn: ({
+      lessonId,
+      action,
+      presentationFormat,
+      question,
+    }: {
+      lessonId: string;
+      action:
+        | "teach"
+        | "explain-another-way"
+        | "give-example"
+        | "answer-question"
+        | "change-format";
+      presentationFormat?: LessonActivity["presentation_format"];
+      question?: string;
+    }) =>
       apiRequest(
         `/api/v1/learning-sessions/${sessionId}/lessons/${lessonId}/activities`,
         LessonActivitySchema,
         {
           method: "POST",
-          body: JSON.stringify({ regenerate: true }),
+          body: JSON.stringify({
+            regenerate: true,
+            action,
+            presentation_format: presentationFormat,
+            question,
+          }),
         },
       ),
-    onSuccess: async (newActivity, lessonId) => {
+    onSuccess: async (newActivity, { lessonId }) => {
       setSelectedActivityId(newActivity.id);
       await queryClient.invalidateQueries({
         queryKey: ["lesson-activities", sessionId, lessonId],
@@ -385,7 +407,13 @@ function LearningSessionPage() {
                   )}
                   <button
                     type="button"
-                    onClick={() => regenerateActivity.mutate(viewedLesson.lesson_id)}
+                    onClick={() =>
+                      regenerateActivity.mutate({
+                        lessonId: viewedLesson.lesson_id,
+                        action: "teach",
+                        presentationFormat: viewedActivity.presentation_format,
+                      })
+                    }
                     disabled={regenerateActivity.isPending}
                     className="mt-4 rounded-lg border border-indigo-600 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60"
                   >
@@ -398,25 +426,119 @@ function LearningSessionPage() {
                       {regenerateActivity.error.message}
                     </p>
                   )}
-                  <MarkdownRenderer
-                    className="mt-5"
-                    content={viewedActivity.content.content}
-                  />
-                  {viewedActivity.content.image_descriptions.length > 0 && (
-                    <section className="mt-6 rounded-xl bg-slate-50 p-4">
-                      <h4 className="font-semibold text-slate-900">
-                        Illustration ideas
-                      </h4>
-                      <ul className="mt-2 list-inside list-disc space-y-2 text-sm text-slate-600">
-                        {viewedActivity.content.image_descriptions.map(
-                          (description) => (
-                            <li key={description}>{description}</li>
-                          ),
-                        )}
-                      </ul>
-                    </section>
-                  )}
+                  <ActivityRenderer key={viewedActivity.id} activity={viewedActivity} />
                 </>
+              )}
+            </section>
+            <section className="mt-7 rounded-2xl border border-sky-100 bg-sky-50/50 p-6">
+              <h3 className="text-xl font-semibold text-slate-950">
+                Learn another way
+              </h3>
+              <p className="mt-2 text-slate-600">
+                Ask about this lesson, request a different explanation, or try a
+                concrete example.
+              </p>
+              <form
+                className="mt-4 flex flex-col gap-3 sm:flex-row"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!viewedLesson || !learnerQuestion.trim()) return;
+                  regenerateActivity.mutate(
+                    {
+                      lessonId: viewedLesson.lesson_id,
+                      action: "answer-question",
+                      presentationFormat: viewedActivity?.presentation_format,
+                      question: learnerQuestion.trim(),
+                    },
+                    { onSuccess: () => setLearnerQuestion("") },
+                  );
+                }}
+              >
+                <label className="sr-only" htmlFor="lesson-question">
+                  Ask a question about this lesson
+                </label>
+                <input
+                  id="lesson-question"
+                  value={learnerQuestion}
+                  onChange={(event) => setLearnerQuestion(event.target.value)}
+                  maxLength={2000}
+                  placeholder="What would you like clarified?"
+                  className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2.5"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    regenerateActivity.isPending || !learnerQuestion.trim()
+                  }
+                  className="rounded-lg bg-sky-700 px-4 py-2.5 font-semibold text-white hover:bg-sky-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Ask
+                </button>
+              </form>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  disabled={regenerateActivity.isPending}
+                  onClick={() =>
+                    viewedLesson &&
+                    regenerateActivity.mutate({
+                      lessonId: viewedLesson.lesson_id,
+                      action: "explain-another-way",
+                      presentationFormat: viewedActivity?.presentation_format,
+                    })
+                  }
+                  className="rounded-lg border border-sky-700 px-4 py-2 font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-60"
+                >
+                  Explain another way
+                </button>
+                <button
+                  type="button"
+                  disabled={regenerateActivity.isPending}
+                  onClick={() =>
+                    viewedLesson &&
+                    regenerateActivity.mutate({
+                      lessonId: viewedLesson.lesson_id,
+                      action: "give-example",
+                      presentationFormat: viewedActivity?.presentation_format,
+                    })
+                  }
+                  className="rounded-lg border border-sky-700 px-4 py-2 font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-60"
+                >
+                  Give an example
+                </button>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  Present as
+                  <select
+                    value={viewedActivity?.presentation_format ?? "text-and-images"}
+                    onChange={(event) => {
+                      if (viewedLesson) {
+                        regenerateActivity.mutate({
+                          lessonId: viewedLesson.lesson_id,
+                          action: "change-format",
+                          presentationFormat:
+                            LessonActivitySchema.shape.presentation_format.parse(
+                              event.target.value,
+                            ),
+                        });
+                      }
+                    }}
+                    disabled={regenerateActivity.isPending}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  >
+                    <option value="text-and-images">Text and images</option>
+                    <option value="interactive-simulations">Simulation</option>
+                    <option value="interactive-role-play-activities">Role-play</option>
+                    <option value="games">Mini-game</option>
+                    <option value="animations">Narrated animation</option>
+                    <option value="slides-based">Slides</option>
+                    <option value="online-coding">Coding exercise</option>
+                  </select>
+                </label>
+              </div>
+              {regenerateActivity.isPending && (
+                <p className="mt-3 text-sm text-slate-600" aria-live="polite">
+                  Preparing a lesson activity…
+                </p>
               )}
             </section>
             <section className="mt-7 rounded-2xl border border-indigo-100 bg-indigo-50/50 p-6">

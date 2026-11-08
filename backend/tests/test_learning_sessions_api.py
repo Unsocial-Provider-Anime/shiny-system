@@ -426,6 +426,64 @@ class LearningSessionApiTests(unittest.TestCase):
         generate.assert_called_once()
         self.assertEqual(len(database.table_data["activities"]), 1)
 
+    def test_activity_generation_supports_format_changes_and_questions(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        slides = GeneratedLessonActivity.model_validate(
+            {
+                "presentation_format": "slides-based",
+                "content": {
+                    "type": "slides-based",
+                    "slides": [
+                        {"title": "Assertions", "content": "Check behavior."},
+                        {"title": "Example", "content": "Compare expected output."},
+                    ],
+                },
+            }
+        )
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_lesson_activity",
+                return_value=slides,
+            ) as generate,
+        ):
+            response = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities",
+                json={
+                    "regenerate": True,
+                    "action": "answer-question",
+                    "question": "Why use assertions?",
+                    "presentation_format": "slides-based",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["presentation_format"], "slides-based")
+        self.assertEqual(
+            response.json()["content"]["type"],
+            response.json()["presentation_format"],
+        )
+        generate.assert_called_once()
+        self.assertEqual(
+            generate.call_args.kwargs,
+            {
+                "presentation_format": "slides-based",
+                "action": "answer-question",
+                "question": "Why use assertions?",
+            },
+        )
+
     def test_activity_generation_only_allows_the_current_lesson(self) -> None:
         database = FakeDatabase()
         database.table_data["learning_sessions"].append(
