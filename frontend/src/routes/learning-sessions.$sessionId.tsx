@@ -98,55 +98,6 @@ function LearningSessionPage() {
       await queryClient.invalidateQueries({ queryKey: interactionsKey });
     },
   });
-  const interactionsKey = ["learning-interactions", sessionId];
-  const interactions = useQuery({
-    queryKey: interactionsKey,
-    enabled: Boolean(session.data),
-    queryFn: () =>
-      apiRequest(
-        `/api/v1/learning-sessions/${sessionId}/interactions`,
-        QuizInteractionSchema.array(),
-      ),
-  });
-  const generateQuiz = useMutation({
-    mutationFn: () =>
-      apiRequest(
-        `/api/v1/learning-sessions/${sessionId}/interactions`,
-        QuizInteractionSchema,
-        {
-          method: "POST",
-          body: JSON.stringify({ kind: "action", action: "quiz-me" }),
-        },
-      ),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: interactionsKey });
-    },
-  });
-  const [quizSelection, setQuizSelection] = useState<{
-    interactionId: string;
-    selectedOption: number;
-  } | null>(null);
-  const answerQuiz = useMutation({
-    mutationFn: ({
-      interactionId,
-      selectedOption,
-    }: {
-      interactionId: string;
-      selectedOption: number;
-    }) =>
-      apiRequest(
-        `/api/v1/learning-sessions/${sessionId}/interactions/${interactionId}/answer`,
-        QuizInteractionSchema,
-        {
-          method: "POST",
-          body: JSON.stringify({ selected_option: selectedOption }),
-        },
-      ),
-    onSuccess: async () => {
-      setQuizSelection(null);
-      await queryClient.invalidateQueries({ queryKey: interactionsKey });
-    },
-  });
   const data = session.data;
   const currentModuleId = data?.current_module_id;
   const currentLessonId = data?.current_lesson_id;
