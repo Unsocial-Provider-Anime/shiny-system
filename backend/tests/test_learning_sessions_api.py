@@ -12,6 +12,7 @@ from app.api.courses import require_user_id
 from app.api.learning_sessions import router as learning_sessions_router
 from app.database.supabase import get_supabase_client
 from app.schemas.activity import GeneratedLessonActivity
+from app.schemas.interaction import GeneratedQuiz
 
 COURSE_ID = str(uuid4())
 VERSION_ID = str(uuid4())
@@ -80,6 +81,7 @@ class FakeDatabase:
             "learning_sessions": [],
             "lesson_progress": [],
             "activities": [],
+            "learning_interactions": [],
             "course_access": [],
         }
         self.rpc_calls: list[tuple[str, dict[str, object]]] = []
@@ -155,6 +157,7 @@ class FakeQuery:
         self.table_name = table
         self.filters: list[tuple[str, object]] = []
         self.insert_data: dict[str, object] | None = None
+        self.update_data: dict[str, object] | None = None
 
     def select(self, *_args: object) -> "FakeQuery":
         return self
@@ -173,11 +176,19 @@ class FakeQuery:
         self.insert_data = data
         return self
 
+    def update(self, data: dict[str, object]) -> "FakeQuery":
+        self.update_data = data
+        return self
+
+    def is_(self, field: str, value: str) -> "FakeQuery":
+        self.filters.append((field, None if value == "null" else value))
+        return self
+
     def execute(self) -> SimpleNamespace:
         table_rows = self.database.table_data[self.table_name]
         if self.insert_data is not None:
             row = {**self.insert_data, "id": 42}
-            if self.table_name == "activities":
+            if self.table_name in {"activities", "learning_interactions"}:
                 row["id"] = str(uuid4())
                 row["created_at"] = "2026-11-08T10:00:00Z"
             table_rows.append(row)
@@ -187,6 +198,9 @@ class FakeQuery:
             for row in table_rows
             if all(row.get(field) == value for field, value in self.filters)
         ]
+        if self.update_data is not None:
+            for row in rows:
+                row.update(self.update_data)
         return SimpleNamespace(data=rows)
 
 
@@ -455,6 +469,106 @@ class LearningSessionApiTests(unittest.TestCase):
         ):
             response = client.post(
                 f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+
+        self.assertEqual(response.status_code, 404)
+        generate.assert_not_called()
+
+    def test_quiz_interaction_can_be_generated_answered_and_resumed(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        generated_quiz = {
+            "question": "What does this assertion check?",
+            "options": ["Expected behavior", "Code formatting"],
+            "correct_option": 0,
+            "explanation": "Assertions compare actual and expected behavior.",
+        }
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_quiz",
+                return_value=GeneratedQuiz.model_validate(generated_quiz),
+            ) as generate,
+        ):
+            created = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions",
+                json={"kind": "action", "action": "quiz-me"},
+            )
+            interaction_id = created.json()["id"]
+            answer = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions/"
+                f"{interaction_id}/answer",
+                json={"selected_option": 0},
+            )
+            resumed = client.get(f"/api/v1/learning-sessions/{SESSION_ID}/interactions")
+
+        self.assertEqual(created.status_code, 201)
+        self.assertNotIn("correct_option", created.json())
+        self.assertIsNone(created.json()["explanation"])
+        self.assertEqual(answer.status_code, 200)
+        self.assertTrue(answer.json()["is_correct"])
+        self.assertEqual(answer.json()["explanation"], generated_quiz["explanation"])
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.json()[0], answer.json())
+        generate.assert_called_once()
+
+    def test_quiz_interaction_rejects_answer_outside_generated_options(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        generated_quiz = {
+            "question": "What does this assertion check?",
+            "options": ["Expected behavior", "Code formatting"],
+            "correct_option": 0,
+            "explanation": "Assertions compare actual and expected behavior.",
+        }
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_quiz",
+                return_value=GeneratedQuiz.model_validate(generated_quiz),
+            ),
+        ):
+            created = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions",
+                json={"kind": "action", "action": "quiz-me"},
+            )
+            answer = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions/"
+                f"{created.json()['id']}/answer",
+                json={"selected_option": 3},
+            )
+
+        self.assertEqual(answer.status_code, 422)
+
+    def test_quiz_interaction_requires_session_ownership(self) -> None:
+        database = FakeDatabase()
+        with (
+            self.make_client(42, database) as client,
+            patch("app.api.learning_sessions.generate_quiz") as generate,
+        ):
+            response = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions",
+                json={"kind": "action", "action": "quiz-me"},
             )
 
         self.assertEqual(response.status_code, 404)

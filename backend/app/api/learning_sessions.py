@@ -10,11 +10,18 @@ from app.api.courses import can_access_course, require_user_id
 from app.database.supabase import get_supabase_client
 from app.schemas.activity import LessonActivityResponse
 from app.schemas.course import CoursePlan
+from app.schemas.interaction import (
+    GeneratedQuiz,
+    GenerateInteractionRequest,
+    QuizInteractionResponse,
+    SubmitQuizAnswerRequest,
+)
 from app.services.course_generator import (
     CourseGenerationError,
     ProviderConfigurationError,
 )
 from app.services.lesson_activity_generator import generate_lesson_activity
+from app.services.quiz_generator import generate_quiz
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/learning-sessions", tags=["learning sessions"])
@@ -184,6 +191,39 @@ def _full_session(
         "plan": plan.model_dump(mode="json"),
         "completed_lessons": _rows(progress_response),
     }
+
+
+def _quiz_interaction_response(row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        quiz = GeneratedQuiz.model_validate(row["content"])
+        selected_option = row.get("selected_option")
+        response = QuizInteractionResponse(
+            id=row["id"],
+            session_id=row["session_id"],
+            lesson_id=row["lesson_id"],
+            kind=row["kind"],
+            action=row["action"],
+            question=quiz.question,
+            options=quiz.options,
+            selected_option=selected_option,
+            is_correct=(
+                selected_option == quiz.correct_option
+                if selected_option is not None
+                else None
+            ),
+            explanation=quiz.explanation if selected_option is not None else None,
+            created_at=row["created_at"],
+        )
+        return response.model_dump(mode="json")
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        logger.exception("Stored quiz interaction %s is invalid.", row.get("id"))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_learning_interaction",
+                "message": "The learning interaction is unavailable.",
+            },
+        ) from error
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -450,6 +490,225 @@ def create_lesson_activity(
                 "message": "The lesson activity could not be loaded.",
             },
         ) from error
+
+
+@router.get("/{session_id}/interactions", response_model=list[QuizInteractionResponse])
+def list_learning_interactions(
+    session_id: UUID,
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> list[dict[str, Any]]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
+    response = _database_call(
+        "list learning interactions",
+        lambda: (
+            database.table("learning_interactions")
+            .select("*")
+            .eq("session_id", str(session_id))
+            .order("created_at")
+            .execute()
+        ),
+    )
+    return [_quiz_interaction_response(row) for row in _rows(response)]
+
+
+@router.post(
+    "/{session_id}/interactions",
+    status_code=status.HTTP_201_CREATED,
+    response_model=QuizInteractionResponse,
+)
+def create_learning_interaction(
+    session_id: UUID,
+    payload: GenerateInteractionRequest,
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> dict[str, Any]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
+    if session.get("status") != "active":
+        raise HTTPException(
+            status_code=409, detail="This learning session is complete."
+        )
+    lesson_id = session.get("current_lesson_id")
+    if not lesson_id:
+        raise HTTPException(status_code=409, detail="There is no current lesson.")
+
+    course = _course(database, session["course_id"])
+    version = _version(database, session["course_version_id"])
+    if (
+        course is None
+        or version is None
+        or version.get("course_id") != session["course_id"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_learning_session",
+                "message": "The learning session is unavailable.",
+            },
+        )
+    plan = _plan(version)
+    current_module = next(
+        (
+            module
+            for module in plan.modules
+            if module.module_id == session.get("current_module_id")
+        ),
+        None,
+    )
+    current_lesson = (
+        next(
+            (
+                lesson
+                for lesson in current_module.lessons
+                if lesson.lesson_id == lesson_id
+            ),
+            None,
+        )
+        if current_module
+        else None
+    )
+    if current_lesson is None:
+        raise HTTPException(status_code=409, detail="There is no current lesson.")
+
+    try:
+        quiz = generate_quiz(course["title"], current_module, current_lesson)
+    except ProviderConfigurationError as error:
+        logger.error("Quiz generation is not configured: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "quiz_generation_unavailable",
+                "message": "Quiz generation is not configured.",
+            },
+        ) from error
+    except CourseGenerationError as error:
+        logger.warning("Quiz generation returned invalid content: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "invalid_generated_quiz",
+                "message": "The quiz could not be validated. Please retry.",
+            },
+        ) from error
+    except Exception as error:
+        logger.exception("Quiz provider request failed.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "quiz_generation_failed",
+                "message": "Quiz generation failed. Please retry.",
+            },
+        ) from error
+
+    inserted = _database_call(
+        "save learning interaction",
+        lambda: (
+            database.table("learning_interactions")
+            .insert(
+                {
+                    "session_id": str(session_id),
+                    "lesson_id": lesson_id,
+                    "kind": payload.kind,
+                    "action": payload.action,
+                    "content": quiz.model_dump(mode="json"),
+                    "selected_option": None,
+                }
+            )
+            .execute()
+        ),
+    )
+    rows = _rows(inserted)
+    if not rows:
+        logger.error("Saving quiz for session %s returned no record.", session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_database_response",
+                "message": "The quiz could not be saved.",
+            },
+        )
+    return _quiz_interaction_response(rows[0])
+
+
+@router.post(
+    "/{session_id}/interactions/{interaction_id}/answer",
+    response_model=QuizInteractionResponse,
+)
+def submit_learning_interaction_answer(
+    session_id: UUID,
+    interaction_id: UUID,
+    payload: SubmitQuizAnswerRequest,
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> dict[str, Any]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
+    if session.get("status") != "active":
+        raise HTTPException(
+            status_code=409, detail="This learning session is complete."
+        )
+    response = _database_call(
+        "load learning interaction",
+        lambda: (
+            database.table("learning_interactions")
+            .select("*")
+            .eq("id", str(interaction_id))
+            .eq("session_id", str(session_id))
+            .limit(1)
+            .execute()
+        ),
+    )
+    rows = _rows(response)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Learning interaction not found.")
+    row = rows[0]
+    if row.get("lesson_id") != session.get("current_lesson_id"):
+        raise HTTPException(status_code=409, detail="This is not the current lesson.")
+    try:
+        quiz = GeneratedQuiz.model_validate(row["content"])
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        logger.exception("Stored quiz interaction %s is invalid.", interaction_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_learning_interaction",
+                "message": "The learning interaction is unavailable.",
+            },
+        ) from error
+    if payload.selected_option >= len(quiz.options):
+        raise HTTPException(
+            status_code=422, detail="Choose one of the available options."
+        )
+    if row.get("selected_option") is not None:
+        raise HTTPException(
+            status_code=409, detail="This quiz has already been answered."
+        )
+
+    updated = _database_call(
+        "save learning interaction answer",
+        lambda: (
+            database.table("learning_interactions")
+            .update({"selected_option": payload.selected_option})
+            .eq("id", str(interaction_id))
+            .eq("session_id", str(session_id))
+            .is_("selected_option", "null")
+            .execute()
+        ),
+    )
+    updated_rows = _rows(updated)
+    if not updated_rows:
+        raise HTTPException(
+            status_code=409, detail="This quiz has already been answered."
+        )
+    return _quiz_interaction_response(updated_rows[0])
 
 
 @router.post("/{session_id}/lessons/{lesson_id}/complete")
