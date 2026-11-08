@@ -88,9 +88,25 @@ export const CourseSchema = z
     id: z.string(),
     title: z.string(),
     description: z.string(),
+    status: z.enum(["draft", "published", "archived"]).optional(),
+    visibility: z.enum(["public", "restricted"]).optional(),
+    is_owner: z.boolean().optional(),
     plan: CoursePlanSchema,
   })
   .passthrough();
+
+export const CourseAccessSchema = z
+  .object({
+    user_id: z.number(),
+    email: z.string().nullable(),
+    granted_at: z.string(),
+  })
+  .passthrough();
+
+export const CourseVisibilityResponseSchema = z.object({
+  course_id: z.string(),
+  visibility: z.enum(["public", "restricted"]),
+});
 
 export const LearningSessionSchema = z
   .object({

@@ -11,6 +11,7 @@ PresentationFormat = Literal[
     "slides-based",
     "online-coding",
 ]
+CourseVisibility = Literal["public", "restricted"]
 
 
 class StrictModel(BaseModel):
@@ -113,6 +114,7 @@ class CourseDraftProposal(StrictModel):
     title: Annotated[str, Field(min_length=1, max_length=200)]
     description: NonEmptyText
     default_presentation_format: PresentationFormat = "text-and-images"
+    visibility: CourseVisibility = "restricted"
     plan: CoursePlan
 
 
@@ -120,6 +122,7 @@ class CourseUpdateRequest(StrictModel):
     title: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     description: NonEmptyText | None = None
     default_presentation_format: PresentationFormat | None = None
+    visibility: CourseVisibility | None = None
     plan: CoursePlan | None = None
 
     @model_validator(mode="after")

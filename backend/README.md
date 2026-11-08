@@ -13,6 +13,22 @@ sign-in does not verify control of the email address, so it is for a trusted
 prototype only and is not suitable for production accounts or sensitive data.
 Set a long, random `SESSION_SECRET` and use HTTPS outside development.
 
+## Course sharing
+
+Apply migration `00005_course_sharing.sql` after the earlier migrations.
+Courses default to `restricted`; existing published courses are migrated as
+`public` to preserve their prior discoverability. Course owners can set a
+draft's visibility to `public` or `restricted`, then grant or revoke access for
+existing accounts using the course access endpoints. Public courses are
+discoverable without signing in; restricted courses are visible only to their
+owner and users with a grant. Owners may change visibility after publishing
+without changing the published content version. Pending invites for email
+addresses without an account are not supported.
+
+Users may create courses and learn from courses using the same account. Course
+ownership does not grant access to another user's restricted course, and access
+is checked both by the API and when the database creates a learning session.
+
 ## Learning sessions
 
 - `POST /api/v1/learning-sessions` starts or resumes the learner's active

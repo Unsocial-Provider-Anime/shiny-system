@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, ValidationError
 from supabase import Client
 
-from app.api.courses import require_user_id
+from app.api.courses import can_access_course, require_user_id
 from app.database.supabase import get_supabase_client
 from app.schemas.activity import LessonActivityResponse
 from app.schemas.course import CoursePlan
@@ -55,7 +55,10 @@ def _course(database: Client, course_id: str) -> dict[str, Any] | None:
         "load course",
         lambda: (
             database.table("courses")
-            .select("id, title, description, status, published_version_id")
+            .select(
+                "id, title, description, status, visibility, created_by, "
+                "published_version_id"
+            )
             .eq("id", course_id)
             .limit(1)
             .execute()
@@ -116,9 +119,30 @@ def _session(
     return rows[0] if rows else None
 
 
+def _ensure_session_course_access(
+    database: Client,
+    session: dict[str, Any],
+    user_id: int,
+) -> dict[str, Any]:
+    course = _course(database, session["course_id"])
+    if course is None:
+        logger.error("Learning session %s references a missing course.", session["id"])
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_learning_session",
+                "message": "The learning session is unavailable.",
+            },
+        )
+    if not can_access_course(database, course, user_id):
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    return course
+
+
 def _full_session(
     database: Client,
     session: dict[str, Any],
+    user_id: int,
 ) -> dict[str, Any]:
     course = _course(database, session["course_id"])
     version = _version(database, session["course_version_id"])
@@ -137,6 +161,8 @@ def _full_session(
                 "message": "The learning session is unavailable.",
             },
         )
+    if not can_access_course(database, course, user_id):
+        raise HTTPException(status_code=404, detail="Learning session not found.")
     plan = _plan(version)
     progress_response = _database_call(
         "load lesson progress",
@@ -168,7 +194,11 @@ def start_learning_session(
 ) -> dict[str, Any]:
     course_id = str(payload.course_id)
     course = _course(database, course_id)
-    if course is None or course.get("status") != "published":
+    if (
+        course is None
+        or course.get("status") != "published"
+        or not can_access_course(database, course, user_id)
+    ):
         raise HTTPException(status_code=404, detail="Published course not found.")
 
     version_id = course.get("published_version_id")
@@ -213,7 +243,7 @@ def start_learning_session(
         raise HTTPException(
             status_code=500, detail="The learning session could not be loaded."
         )
-    return _full_session(database, session)
+    return _full_session(database, session, user_id)
 
 
 @router.get("")
@@ -232,7 +262,14 @@ def list_learning_sessions(
             .execute()
         ),
     )
-    return [_full_session(database, row) for row in _rows(response)]
+    sessions = []
+    for row in _rows(response):
+        course = _course(database, row["course_id"])
+        if course is None:
+            sessions.append(_full_session(database, row, user_id))
+        elif can_access_course(database, course, user_id):
+            sessions.append(_full_session(database, row, user_id))
+    return sessions
 
 
 @router.get("/{session_id}")
@@ -244,7 +281,7 @@ def get_learning_session(
     session = _session(database, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
-    return _full_session(database, session)
+    return _full_session(database, session, user_id)
 
 
 @router.post(
@@ -267,6 +304,7 @@ def create_lesson_activity(
     session = _session(database, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
     if session.get("status") != "active":
         raise HTTPException(
             status_code=409, detail="This learning session is complete."
@@ -431,6 +469,7 @@ def complete_lesson(
     session = _session(database, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
     if session.get("status") != "active":
         raise HTTPException(
             status_code=409, detail="This learning session is complete."
@@ -452,4 +491,4 @@ def complete_lesson(
     updated_session = _session(database, session_id, user_id)
     if updated_session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
-    return _full_session(database, updated_session)
+    return _full_session(database, updated_session, user_id)
