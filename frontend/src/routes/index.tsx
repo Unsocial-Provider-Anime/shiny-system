@@ -29,12 +29,20 @@ function CataloguePage() {
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           {profile.data ? (
-            <Link
-              to="/my-learning"
-              className="rounded-xl bg-white px-5 py-3 font-semibold text-indigo-950 hover:bg-indigo-50"
-            >
-              My learning
-            </Link>
+            <>
+              <Link
+                to="/my-learning"
+                className="rounded-xl bg-white px-5 py-3 font-semibold text-indigo-950 hover:bg-indigo-50"
+              >
+                My learning
+              </Link>
+              <Link
+                to="/create-course"
+                className="rounded-xl border border-indigo-300 px-5 py-3 font-semibold text-white hover:bg-indigo-900"
+              >
+                Create a course
+              </Link>
+            </>
           ) : (
             <Link
               to="/login"

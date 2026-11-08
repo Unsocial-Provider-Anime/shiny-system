@@ -4,8 +4,12 @@
 
 Apply the SQL files in `../migrations` in numeric order to the Supabase project.
 The backend uses `SUPABASE_URL` and `SUPABASE_KEY`; configure `SUPABASE_KEY`
-with a server-only service-role key so the API can call the learning-session
-RPCs. Never put this key in the frontend or expose it to browsers.
+with a server-only service-role key so the API can call the database RPCs.
+Never put this key in the frontend or expose it to browsers. Migration `00006`
+grants execute permission on `save_course_draft` to `public`, `anon`, and
+`authenticated`. This function-level grant does not grant those roles direct
+table access. If an RPC reports `permission denied for function`, verify that
+migration `00006` has been applied after the function was created.
 
 The API stores each email-only demo account in `public."user"` and uses that
 row's numeric ID for course ownership and learning sessions. The email-only
@@ -48,3 +52,11 @@ activities.
 The user and learning-session tables have RLS enabled without browser-facing
 policies. The API uses the server-side service-role key and enforces ownership
 using the email account's internal user ID.
+
+## Course generation diagnostics
+
+Course-generation responses from the AI provider are written to backend logs
+at `INFO` level. Schema validation failures include the failed fields at
+`WARNING` level, while the API continues to return a generic error to clients.
+Generated output may reflect the course brief, so restrict access to backend
+logs accordingly.

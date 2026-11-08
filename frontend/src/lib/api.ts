@@ -83,6 +83,32 @@ export const CoursePlanSchema = z
   })
   .passthrough();
 
+export const CourseDraftProposalSchema = z
+  .object({
+    title: z.string().min(1).max(200),
+    description: z.string().min(1).max(4000),
+    default_presentation_format: z.enum([
+      "text-and-images",
+      "interactive-simulations",
+      "interactive-role-play-activities",
+      "games",
+      "animations",
+      "slides-based",
+      "online-coding",
+    ]),
+    visibility: z.enum(["public", "restricted"]),
+    plan: CoursePlanSchema,
+  })
+  .passthrough();
+
+export const CourseSaveResponseSchema = z.object({
+  course_id: z.string(),
+  version_id: z.string(),
+  version_number: z.number(),
+  status: z.literal("draft"),
+  visibility: z.enum(["public", "restricted"]),
+});
+
 export const CourseSchema = z
   .object({
     id: z.string(),
