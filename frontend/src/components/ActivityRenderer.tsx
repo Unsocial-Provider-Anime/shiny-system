@@ -22,6 +22,7 @@ export function ActivityRenderer({ activity, sessionId }: Props) {
   const [code, setCode] = useState(activity.content.type === "online-coding"
     ? activity.content.starter_code
     : "");
+  const [solutionVisible, setSolutionVisible] = useState(false);
   const codingAnswer = useMutation({
     mutationFn: ({ revealSolution }: { revealSolution: boolean }) => {
       if (activity.content.type !== "online-coding") {
@@ -290,6 +291,7 @@ export function ActivityRenderer({ activity, sessionId }: Props) {
               onChange={(event) => {
                 setCode(event.target.value);
                 codingAnswer.reset();
+                setSolutionVisible(false);
               }}
               onKeyDown={(event) => {
                 if (event.key === "Tab") {
@@ -300,6 +302,7 @@ export function ActivityRenderer({ activity, sessionId }: Props) {
                   const nextCode = `${code.slice(0, start)}    ${code.slice(end)}`;
                   setCode(nextCode);
                   codingAnswer.reset();
+                  setSolutionVisible(false);
                   requestAnimationFrame(() => {
                     target.selectionStart = start + 4;
                     target.selectionEnd = start + 4;
@@ -340,20 +343,55 @@ export function ActivityRenderer({ activity, sessionId }: Props) {
               <p className="mt-3 leading-7 text-slate-700">
                 {activity.content.explanation}
               </p>
-              {!codingAnswer.data.is_correct && !codingAnswer.data.solution && (
+              {!codingAnswer.data.is_correct && (
                 <button
                   type="button"
-                  onClick={() => codingAnswer.mutate({ revealSolution: true })}
+                  onClick={() => {
+                    if (solutionVisible) {
+                      setSolutionVisible(false);
+                    } else if (codingAnswer.data?.solution) {
+                      setSolutionVisible(true);
+                    } else {
+                      codingAnswer.mutate(
+                        { revealSolution: true },
+                        { onSuccess: () => setSolutionVisible(true) },
+                      );
+                    }
+                  }}
                   disabled={codingAnswer.isPending}
                   className="mt-4 rounded-lg border border-indigo-700 px-4 py-2 font-semibold text-indigo-800 hover:bg-indigo-50 disabled:opacity-60"
                 >
-                  {codingAnswer.isPending ? "Loading solution…" : "Show solution"}
+                  {codingAnswer.isPending
+                    ? "Loading solution…"
+                    : solutionVisible
+                      ? "Hide solution"
+                      : "Show solution"}
                 </button>
               )}
-              {codingAnswer.data.solution && (
-                <pre className="mt-4 overflow-x-auto rounded-lg bg-slate-950 p-4 text-sm text-slate-100">
-                  <code>{codingAnswer.data.solution}</code>
-                </pre>
+              {solutionVisible && codingAnswer.data.solution && (
+                <section className="mt-4 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                  <h5 className="border-b border-slate-700 px-4 py-2 text-sm font-semibold text-slate-100">
+                    Reference solution
+                  </h5>
+                  <div className="overflow-x-auto p-4">
+                    <ol className="w-max min-w-full list-none font-mono text-sm leading-6 text-slate-100">
+                      {codingAnswer.data.solution.split("\n").map((line, index) => (
+                        <li
+                          key={index}
+                          className="grid grid-cols-[2rem_minmax(0,1fr)] gap-4"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="select-none text-right text-slate-500"
+                          >
+                            {index + 1}
+                          </span>
+                          <code className="whitespace-pre">{line || " "}</code>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </section>
               )}
             </div>
           )}
