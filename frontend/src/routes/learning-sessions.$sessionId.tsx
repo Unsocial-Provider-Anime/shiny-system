@@ -676,7 +676,7 @@ function LearningSessionPage() {
               </p>
               {!isReviewing && (
                 <p className="mt-3 text-sm text-slate-500">
-                  When you’re ready, mark this lesson complete. Your next lesson
+                  When you're ready, mark this lesson complete. Your next lesson
                   will be saved automatically.
                 </p>
               )}
