@@ -450,6 +450,84 @@ class LearningSessionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         generate.assert_not_called()
 
+    def test_completed_lesson_activity_can_be_reviewed_and_regenerated(self) -> None:
+        database = FakeDatabase()
+        session = {
+            "id": SESSION_ID,
+            "user_id": 42,
+            "course_id": COURSE_ID,
+            "course_version_id": VERSION_ID,
+            "status": "active",
+            "current_module_id": "basics",
+            "current_lesson_id": "second",
+        }
+        database.table_data["learning_sessions"].append(session)
+        database.table_data["lesson_progress"].append(
+            {
+                "session_id": SESSION_ID,
+                "lesson_id": "first",
+                "status": "completed",
+                "completed_at": "2026-11-08T10:05:00Z",
+            }
+        )
+        original_activity = {
+            "id": str(uuid4()),
+            "session_id": SESSION_ID,
+            "lesson_id": "first",
+            "presentation_format": "text-and-images",
+            "content": {
+                "type": "text-and-images",
+                "content": "Original saved activity.",
+                "image_descriptions": [],
+            },
+            "created_at": "2026-11-08T10:00:00Z",
+        }
+        database.table_data["activities"].append(original_activity)
+        regenerated_activity = GeneratedLessonActivity.model_validate(
+            {
+                "presentation_format": "text-and-images",
+                "content": {
+                    "type": "text-and-images",
+                    "content": "A fresh review activity.",
+                    "image_descriptions": [],
+                },
+            }
+        )
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_lesson_activity",
+                return_value=regenerated_activity,
+            ) as generate,
+        ):
+            saved = client.get(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+            generated = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities",
+                json={"regenerate": True},
+            )
+            history = client.get(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+            unavailable = client.get(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/not-in-course/activities"
+            )
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(len(saved.json()), 1)
+        self.assertEqual(generated.status_code, 200)
+        self.assertEqual(
+            generated.json()["content"]["content"],
+            "A fresh review activity.",
+        )
+        self.assertEqual(len(database.table_data["activities"]), 2)
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(len(history.json()), 2)
+        self.assertEqual(unavailable.status_code, 409)
+        self.assertEqual(session["current_lesson_id"], "second")
+        generate.assert_called_once()
+
     def test_activity_generation_requires_session_ownership(self) -> None:
         database = FakeDatabase()
         database.table_data["learning_sessions"].append(
@@ -520,6 +598,62 @@ class LearningSessionApiTests(unittest.TestCase):
         self.assertEqual(answer.json()["explanation"], generated_quiz["explanation"])
         self.assertEqual(resumed.status_code, 200)
         self.assertEqual(resumed.json()[0], answer.json())
+        generate.assert_called_once()
+
+    def test_completed_lesson_can_be_quizzed_without_changing_progress(self) -> None:
+        database = FakeDatabase()
+        completed_session = {
+            "id": SESSION_ID,
+            "user_id": 42,
+            "course_id": COURSE_ID,
+            "course_version_id": VERSION_ID,
+            "status": "completed",
+            "current_module_id": None,
+            "current_lesson_id": None,
+            "completed_at": "2026-11-08T10:05:00Z",
+        }
+        database.table_data["learning_sessions"].append(completed_session)
+        database.table_data["lesson_progress"].append(
+            {
+                "session_id": SESSION_ID,
+                "lesson_id": "first",
+                "status": "completed",
+                "completed_at": "2026-11-08T10:05:00Z",
+            }
+        )
+        generated_quiz = {
+            "question": "What does this assertion check?",
+            "options": ["Expected behavior", "Code formatting"],
+            "correct_option": 0,
+            "explanation": "Assertions compare actual and expected behavior.",
+        }
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_quiz",
+                return_value=GeneratedQuiz.model_validate(generated_quiz),
+            ) as generate,
+        ):
+            created = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions",
+                json={
+                    "kind": "action",
+                    "action": "quiz-me",
+                    "lesson_id": "first",
+                },
+            )
+            answered = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/interactions/"
+                f"{created.json()['id']}/answer",
+                json={"selected_option": 0},
+            )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["lesson_id"], "first")
+        self.assertEqual(answered.status_code, 200)
+        self.assertTrue(answered.json()["is_correct"])
+        self.assertEqual(completed_session["status"], "completed")
+        self.assertIsNone(completed_session["current_lesson_id"])
         generate.assert_called_once()
 
     def test_quiz_interaction_rejects_answer_outside_generated_options(self) -> None:

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from openai import OpenAI
@@ -11,6 +12,8 @@ from app.services.course_generator import (
     ProviderConfigurationError,
 )
 from app.services.openai_client import OpenAIModel, get_openai_client
+
+logger = logging.getLogger(__name__)
 
 
 def generate_lesson_activity(
@@ -71,19 +74,55 @@ def generate_lesson_activity(
             },
         ],
         response_format={"type": "json_object"},
-        max_tokens=3000,
+        max_tokens=5000,
     )
     if not response.choices:
         raise CourseGenerationError("The AI provider returned no response choices.")
 
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    finish_reason = getattr(choice, "finish_reason", None)
+    if finish_reason == "length":
+        logger.warning(
+            "Lesson activity response was truncated at the provider's output "
+            "token limit (provider=%s, model=%s).",
+            provider,
+            getattr(response, "model", model_name),
+        )
+        raise CourseGenerationError(
+            "The AI provider truncated the lesson activity at its output limit."
+        )
+
+    content = choice.message.content
     if not content:
         raise CourseGenerationError("The AI provider returned an empty response.")
 
     try:
         payload = json.loads(content)
+    except json.JSONDecodeError as error:
+        logger.warning(
+            "Lesson activity response was not valid JSON "
+            "(provider=%s, model=%s, finish_reason=%s, line=%s, column=%s).",
+            provider,
+            getattr(response, "model", model_name),
+            finish_reason,
+            error.lineno,
+            error.colno,
+        )
+        raise CourseGenerationError(
+            "The AI provider returned a lesson activity that failed validation."
+        ) from error
+
+    try:
         return GeneratedLessonActivity.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError) as error:
+    except ValidationError as error:
+        logger.warning(
+            "Lesson activity response failed schema validation "
+            "(provider=%s, model=%s, finish_reason=%s): %s",
+            provider,
+            getattr(response, "model", model_name),
+            finish_reason,
+            error.errors(include_input=False, include_url=False),
+        )
         raise CourseGenerationError(
             "The AI provider returned a lesson activity that failed validation."
         ) from error
