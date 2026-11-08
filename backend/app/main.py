@@ -1,11 +1,14 @@
 import os
+from typing import Annotated
 
-from fastapi import FastAPI, Depends
+from fastapi import Depends, FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 from supabase import Client
-from app.database.supabase import get_supabase_client
+
+from app.api.auth import router as auth_router
 from app.api.courses import router as courses_router
-from typing import Annotated
+from app.database.supabase import get_supabase_client
+from app.api.learning_sessions import router as learning_sessions_router
 
 session_secret = os.getenv("SESSION_SECRET")
 if not session_secret:
@@ -15,6 +18,8 @@ app_environment = os.getenv("APP_ENV", "development").lower()
 
 app = FastAPI()
 app.include_router(courses_router)
+app.include_router(auth_router)
+app.include_router(learning_sessions_router)
 app.add_middleware(
     SessionMiddleware,
     secret_key=session_secret,
@@ -33,7 +38,6 @@ def read_root():
 @app.get("/health")
 def health(supabase_client: Annotated[Client, Depends(get_supabase_client)]):
     try:
-        # Perform a simple query to check the database connection
         response = supabase_client.table("user").select("created_at").execute()
         return {"status": "OK", "detail": response}
     except Exception as e:
