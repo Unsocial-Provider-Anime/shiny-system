@@ -15,6 +15,16 @@ export const Route = createFileRoute("/learning-sessions/$sessionId")({
   component: LearningSessionPage,
 });
 
+const presentationFormatLabels: Record<LessonActivity["presentation_format"], string> = {
+  "text-and-images": "Text and images",
+  "interactive-simulations": "Simulation",
+  "interactive-role-play-activities": "Role-play",
+  games: "Mini-game",
+  animations: "Narrated animation",
+  "slides-based": "Slides",
+  "online-coding": "Coding exercise",
+};
+
 function LearningSessionPage() {
   const { sessionId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -417,7 +427,10 @@ function LearningSessionPage() {
                       >
                         {activities.data.map((savedActivity, index) => (
                           <option key={savedActivity.id} value={savedActivity.id}>
-                            {index === 0 ? "Latest activity" : `Version ${activities.data.length - index}`}
+                            {index === 0
+                              ? "Latest activity"
+                              : `Version ${activities.data.length - index}`}{" "}
+                            · {presentationFormatLabels[savedActivity.presentation_format]}
                           </option>
                         ))}
                       </select>
