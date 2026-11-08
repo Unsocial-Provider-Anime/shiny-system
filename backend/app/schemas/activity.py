@@ -67,9 +67,7 @@ class RolePlayContent(StrictModel):
     learner_role: Annotated[str, Field(min_length=1, max_length=200)]
     partner_role: Annotated[str, Field(min_length=1, max_length=200)]
     opening_prompt: NonEmptyText
-    response_choices: Annotated[
-        list[RolePlayChoice], Field(min_length=2, max_length=4)
-    ]
+    response_choices: Annotated[list[RolePlayChoice], Field(min_length=2, max_length=4)]
 
 
 class GameChoice(StrictModel):
@@ -123,6 +121,13 @@ class CodingContent(StrictModel):
     explanation: NonEmptyText
 
 
+class PublicCodingContent(StrictModel):
+    type: Literal["online-coding"]
+    instructions: NonEmptyText
+    starter_code: Annotated[str, Field(max_length=6000)]
+    explanation: NonEmptyText
+
+
 ActivityContent = Annotated[
     TextAndImagesContent
     | SimulationContent
@@ -147,7 +152,28 @@ class GeneratedLessonActivity(StrictModel):
 
 
 class LessonActivityResponse(GeneratedLessonActivity):
+    content: Annotated[
+        TextAndImagesContent
+        | SimulationContent
+        | RolePlayContent
+        | GameContent
+        | AnimationContent
+        | SlidesContent
+        | PublicCodingContent,
+        Field(discriminator="type"),
+    ]
     id: UUID
     session_id: UUID
     lesson_id: Identifier
     created_at: str
+
+
+class CheckCodingAnswerRequest(StrictModel):
+    code: Annotated[str, Field(max_length=12000)]
+    reveal_solution: bool = False
+
+
+class CodingAnswerResponse(StrictModel):
+    is_correct: bool
+    message: NonEmptyText
+    solution: Annotated[str, Field(max_length=6000)] | None = None

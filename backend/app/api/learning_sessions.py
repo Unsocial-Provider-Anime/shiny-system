@@ -9,6 +9,10 @@ from supabase import Client
 from app.api.courses import can_access_course, require_user_id
 from app.database.supabase import get_supabase_client
 from app.schemas.activity import (
+    CheckCodingAnswerRequest,
+    CodingAnswerResponse,
+    CodingContent,
+    GeneratedLessonActivity,
     GenerateLessonActivityRequest,
     LessonActivityResponse,
 )
@@ -261,6 +265,35 @@ def _quiz_interaction_response(row: dict[str, Any]) -> dict[str, Any]:
         ) from error
 
 
+def _lesson_activity_response(row: dict[str, Any]) -> dict[str, Any]:
+    activity = GeneratedLessonActivity.model_validate(
+        {
+            "presentation_format": row["presentation_format"],
+            "content": row["content"],
+        }
+    )
+    content = activity.content.model_dump(mode="json")
+    if isinstance(activity.content, CodingContent):
+        content.pop("expected_code")
+    return LessonActivityResponse.model_validate(
+        {
+            **row,
+            "presentation_format": activity.presentation_format,
+            "content": content,
+        }
+    ).model_dump(mode="json")
+
+
+def _normalize_code(code: str) -> str:
+    lines = [
+        line.rstrip()
+        for line in code.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    ]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def start_learning_session(
     payload: StartSessionRequest,
@@ -436,10 +469,8 @@ def create_lesson_activity(
         and generation_request.action == "teach"
     ):
         try:
-            return LessonActivityResponse.model_validate(
-                existing_activities[0]
-            ).model_dump(mode="json")
-        except (TypeError, ValueError, ValidationError) as error:
+            return _lesson_activity_response(existing_activities[0])
+        except (KeyError, TypeError, ValueError, ValidationError) as error:
             logger.exception(
                 "Stored lesson activity for session %s is invalid.", session_id
             )
@@ -518,8 +549,8 @@ def create_lesson_activity(
             },
         )
     try:
-        return LessonActivityResponse.model_validate(rows[0]).model_dump(mode="json")
-    except (TypeError, ValueError, ValidationError) as error:
+        return _lesson_activity_response(rows[0])
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
         logger.exception("Saved lesson activity for session %s is invalid.", session_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -564,11 +595,8 @@ def list_lesson_activities(
         ),
     )
     try:
-        return [
-            LessonActivityResponse.model_validate(row).model_dump(mode="json")
-            for row in _rows(response)
-        ]
-    except (TypeError, ValueError, ValidationError) as error:
+        return [_lesson_activity_response(row) for row in _rows(response)]
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
         logger.exception(
             "Stored lesson activity for session %s is invalid.", session_id
         )
@@ -579,6 +607,80 @@ def list_lesson_activities(
                 "message": "The lesson activity is unavailable.",
             },
         ) from error
+
+
+@router.post(
+    "/{session_id}/lessons/{lesson_id}/activities/{activity_id}/check",
+    response_model=CodingAnswerResponse,
+)
+def check_coding_answer(
+    session_id: UUID,
+    lesson_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=80,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        ),
+    ],
+    activity_id: UUID,
+    payload: CheckCodingAnswerRequest,
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> dict[str, Any]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
+    _ensure_lesson_reviewable(database, session, lesson_id)
+    response = _database_call(
+        "load coding activity",
+        lambda: (
+            database.table("activities")
+            .select("presentation_format, content")
+            .eq("id", str(activity_id))
+            .eq("session_id", str(session_id))
+            .eq("lesson_id", lesson_id)
+            .limit(1)
+            .execute()
+        ),
+    )
+    rows = _rows(response)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Lesson activity not found.")
+    try:
+        activity = GeneratedLessonActivity.model_validate(
+            {
+                "presentation_format": rows[0]["presentation_format"],
+                "content": rows[0]["content"],
+            }
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        logger.exception("Stored lesson activity %s is invalid.", activity_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_lesson_activity",
+                "message": "The lesson activity is unavailable.",
+            },
+        ) from error
+    if not isinstance(activity.content, CodingContent):
+        raise HTTPException(
+            status_code=409, detail="This activity is not a coding exercise."
+        )
+
+    is_correct = _normalize_code(payload.code) == _normalize_code(
+        activity.content.expected_code
+    )
+    return CodingAnswerResponse(
+        is_correct=is_correct,
+        message=(
+            "Correct. Your code matches the expected completion."
+            if is_correct
+            else "Not quite. Check your implementation and try again."
+        ),
+        solution=(activity.content.expected_code if payload.reveal_solution else None),
+    ).model_dump(mode="json")
 
 
 @router.get("/{session_id}/interactions", response_model=list[QuizInteractionResponse])

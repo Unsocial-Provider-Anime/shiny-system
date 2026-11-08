@@ -233,7 +233,6 @@ export const LessonActivitySchema = z
         type: z.literal("online-coding"),
         instructions: z.string(),
         starter_code: z.string(),
-        expected_code: z.string(),
         explanation: z.string(),
       }),
     ]),
@@ -243,6 +242,12 @@ export const LessonActivitySchema = z
   .refine((activity) => activity.presentation_format === activity.content.type, {
     message: "Activity format must match its content type.",
   });
+
+export const CodingAnswerSchema = z.object({
+  is_correct: z.boolean(),
+  message: z.string(),
+  solution: z.string().nullable(),
+});
 
 export const QuizInteractionSchema = z
   .object({

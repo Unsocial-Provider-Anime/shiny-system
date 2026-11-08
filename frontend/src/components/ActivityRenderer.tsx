@@ -1,22 +1,42 @@
 import { useState } from "react";
-import type { LessonActivity } from "@/lib/api";
+import { useMutation } from "@tanstack/react-query";
+import {
+  apiRequest,
+  CodingAnswerSchema,
+  type LessonActivity,
+} from "@/lib/api";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
 type Props = {
   activity: LessonActivity;
+  sessionId: string;
 };
 
 const buttonClass =
   "rounded-lg border border-slate-300 px-4 py-2 text-left text-slate-800 hover:border-indigo-400 hover:bg-indigo-50";
 
-export function ActivityRenderer({ activity }: Props) {
+export function ActivityRenderer({ activity, sessionId }: Props) {
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null);
   const [slideIndex, setSlideIndex] = useState(0);
   const [sceneIndex, setSceneIndex] = useState(0);
   const [code, setCode] = useState(activity.content.type === "online-coding"
     ? activity.content.starter_code
     : "");
-  const [checkedCode, setCheckedCode] = useState(false);
+  const codingAnswer = useMutation({
+    mutationFn: ({ revealSolution }: { revealSolution: boolean }) => {
+      if (activity.content.type !== "online-coding") {
+        throw new Error("This activity is not a coding exercise.");
+      }
+      return apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/lessons/${activity.lesson_id}/activities/${activity.id}/check`,
+        CodingAnswerSchema,
+        {
+          method: "POST",
+          body: JSON.stringify({ code, reveal_solution: revealSolution }),
+        },
+      );
+    },
+  });
 
   switch (activity.content.type) {
     case "text-and-images":
@@ -255,54 +275,91 @@ export function ActivityRenderer({ activity }: Props) {
     case "online-coding":
       return (
         <section className="mt-5 space-y-4">
-          <p className="leading-7 text-slate-700">{activity.content.instructions}</p>
+          <div className="rounded-xl bg-slate-50 p-5">
+            <h4 className="font-semibold text-slate-950">Your task</h4>
+            <MarkdownRenderer
+              className="mt-3"
+              content={activity.content.instructions}
+            />
+          </div>
           <label className="block text-sm font-medium text-slate-700">
-            Complete the code
+            Your code
             <textarea
               spellCheck={false}
               value={code}
               onChange={(event) => {
                 setCode(event.target.value);
-                setCheckedCode(false);
+                codingAnswer.reset();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  const target = event.currentTarget;
+                  const start = target.selectionStart;
+                  const end = target.selectionEnd;
+                  const nextCode = `${code.slice(0, start)}    ${code.slice(end)}`;
+                  setCode(nextCode);
+                  codingAnswer.reset();
+                  requestAnimationFrame(() => {
+                    target.selectionStart = start + 4;
+                    target.selectionEnd = start + 4;
+                  });
+                }
               }}
               rows={Math.min(
                 16,
                 Math.max(6, activity.content.starter_code.split("\n").length + 2),
               )}
-              className="mt-2 block w-full rounded-xl bg-slate-950 p-4 font-mono text-sm leading-6 text-slate-100"
+              className="mt-2 block w-full rounded-xl border border-slate-700 bg-slate-950 p-4 font-mono text-sm leading-6 text-slate-100"
             />
           </label>
           <button
             type="button"
-            onClick={() => setCheckedCode(true)}
+            onClick={() => codingAnswer.mutate({ revealSolution: false })}
+            disabled={codingAnswer.isPending}
             className="rounded-lg bg-indigo-700 px-4 py-2 font-semibold text-white hover:bg-indigo-800"
           >
-            Check completion
+            {codingAnswer.isPending ? "Checking…" : "Check answer"}
           </button>
-          {checkedCode && (
+          {codingAnswer.isError && (
+            <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">
+              {codingAnswer.error.message}
+            </p>
+          )}
+          {codingAnswer.data && (
             <div className="rounded-xl bg-slate-50 p-4">
               <p
                 className={`font-semibold ${
-                  code.trim() === activity.content.expected_code.trim()
+                  codingAnswer.data.is_correct
                     ? "text-emerald-800"
                     : "text-amber-900"
                 }`}
               >
-                {code.trim() === activity.content.expected_code.trim()
-                  ? "Nice work — the completion matches."
-                  : "Not an exact match yet. Compare with the example solution."}
+                {codingAnswer.data.message}
               </p>
-              <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-950 p-4 text-sm text-slate-100">
-                <code>{activity.content.expected_code}</code>
-              </pre>
               <p className="mt-3 leading-7 text-slate-700">
                 {activity.content.explanation}
               </p>
+              {!codingAnswer.data.is_correct && !codingAnswer.data.solution && (
+                <button
+                  type="button"
+                  onClick={() => codingAnswer.mutate({ revealSolution: true })}
+                  disabled={codingAnswer.isPending}
+                  className="mt-4 rounded-lg border border-indigo-700 px-4 py-2 font-semibold text-indigo-800 hover:bg-indigo-50 disabled:opacity-60"
+                >
+                  {codingAnswer.isPending ? "Loading solution…" : "Show solution"}
+                </button>
+              )}
+              {codingAnswer.data.solution && (
+                <pre className="mt-4 overflow-x-auto rounded-lg bg-slate-950 p-4 text-sm text-slate-100">
+                  <code>{codingAnswer.data.solution}</code>
+                </pre>
+              )}
             </div>
           )}
           <p className="text-xs text-slate-500">
-            This exercise compares your completion with a reference; it does not
-            execute code.
+            Your answer is compared with a reference solution after normalizing
+            line endings and trailing whitespace. Code is not executed.
           </p>
         </section>
       );

@@ -50,6 +50,9 @@ is checked both by the API and when the database creates a learning session.
   used only with the authorized lesson context.
 - `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/complete`
   saves completion and advances to the next lesson.
+- `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/activities/{activity_id}/check`
+  checks coding exercise answers server-side. The reference solution is only
+  included when the request sets `reveal_solution` to `true`.
 
 Apply migration `00004_create_lesson_activities.sql` to persist lesson
 activities, then apply migration `00008_allow_lesson_activity_history.sql` to
@@ -68,7 +71,9 @@ Lesson activities are validated against a separate schema and rendered by
 format: text and images, branching simulations, role-play choices, mini-games,
 scene-based animations with browser speech narration, slides, and code-completion
 exercises. Coding exercises compare the learner's completion to a reference;
-the platform does not execute generated code.
+the reference solution is kept server-side and is returned only when the learner
+requests it. Answer checking normalizes line endings and trailing whitespace,
+preserves indentation, and does not execute generated code.
 
 The user and learning-session tables have RLS enabled without browser-facing
 policies. The API uses the server-side service-role key and enforces ownership

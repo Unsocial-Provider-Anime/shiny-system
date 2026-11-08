@@ -457,7 +457,11 @@ function LearningSessionPage() {
                       {regenerateActivity.error.message}
                     </p>
                   )}
-                  <ActivityRenderer key={viewedActivity.id} activity={viewedActivity} />
+                  <ActivityRenderer
+                    key={viewedActivity.id}
+                    activity={viewedActivity}
+                    sessionId={sessionId}
+                  />
                 </>
               )}
             </section>

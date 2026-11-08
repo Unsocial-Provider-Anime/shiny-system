@@ -484,6 +484,67 @@ class LearningSessionApiTests(unittest.TestCase):
             },
         )
 
+    def test_coding_activity_hides_solution_and_checks_answer_on_server(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        activity_id = str(uuid4())
+        database.table_data["activities"].append(
+            {
+                "id": activity_id,
+                "session_id": SESSION_ID,
+                "lesson_id": "first",
+                "presentation_format": "online-coding",
+                "content": {
+                    "type": "online-coding",
+                    "instructions": "Complete the function.",
+                    "starter_code": "def add(a, b):\n    ",
+                    "expected_code": "def add(a, b):\n    return a + b",
+                    "explanation": "Return both values' sum.",
+                },
+                "created_at": "2026-11-08T10:00:00Z",
+            }
+        )
+        with self.make_client(42, database) as client:
+            activity = client.get(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+            latest = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+            checked = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/"
+                f"activities/{activity_id}/check",
+                json={"code": "def add(a, b):\r\n    return a + b   \r\n"},
+            )
+            revealed = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/"
+                f"activities/{activity_id}/check",
+                json={"code": "", "reveal_solution": True},
+            )
+
+        self.assertEqual(activity.status_code, 200)
+        self.assertNotIn("expected_code", activity.json()[0]["content"])
+        self.assertEqual(latest.status_code, 200)
+        self.assertNotIn("expected_code", latest.json()["content"])
+        self.assertEqual(checked.status_code, 200)
+        self.assertTrue(checked.json()["is_correct"])
+        self.assertIsNone(checked.json()["solution"])
+        self.assertEqual(revealed.status_code, 200)
+        self.assertEqual(
+            revealed.json()["solution"],
+            "def add(a, b):\n    return a + b",
+        )
+
     def test_activity_generation_only_allows_the_current_lesson(self) -> None:
         database = FakeDatabase()
         database.table_data["learning_sessions"].append(
