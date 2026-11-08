@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from openai import OpenAI
@@ -6,6 +7,8 @@ from pydantic import ValidationError
 
 from app.schemas.course import CourseDraftProposal, CourseDraftRequest
 from app.services.openai_client import OpenAIModel, get_openai_client
+
+logger = logging.getLogger(__name__)
 
 
 class CourseGenerationError(Exception):
@@ -47,10 +50,17 @@ def generate_course_draft(
                 "content": (
                     "Create a complete mini-course proposal. Return only JSON "
                     "matching this structure: title, description, "
-                    "default_presentation_format, plan. The plan must contain "
+                    "default_presentation_format, plan. Use strings for "
+                    "overview, target_audience, and capstone; milestones, "
+                    "assumptions, learning_outcomes, and prerequisites must "
+                    "be arrays of strings. The plan must contain "
                     "overview, target_audience, assumptions, learning_outcomes, "
                     "prerequisites, modules, milestones, and capstone. Each "
                     "module has module_id, title, description, and lessons. "
+                    "Keep the course compact: use at most three modules and "
+                    "two lessons per module, and keep descriptions and "
+                    "objectives concise. If no time budget is provided, assume "
+                    "a 60-minute mini-course. "
                     "Each lesson has lesson_id, title, purpose, two or three "
                     "observable objectives, key_topics, suggested_activity "
                     "(title, description, presentation_format), completion_check, "
@@ -72,19 +82,56 @@ def generate_course_draft(
             },
         ],
         response_format={"type": "json_object"},
-        max_tokens=5000,
+        max_tokens=8192,
     )
     if not response.choices:
         raise CourseGenerationError("The AI provider returned no response choices.")
 
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    content = choice.message.content
     if not content:
         raise CourseGenerationError("The AI provider returned an empty response.")
 
+    logger.info(
+        "Course generation provider response (provider=%s, model=%s, "
+        "finish_reason=%s):\n%s",
+        provider,
+        getattr(response, "model", model_name),
+        getattr(choice, "finish_reason", None),
+        content,
+    )
+
+    if getattr(choice, "finish_reason", None) == "length":
+        logger.warning(
+            "Course generation response was truncated at the provider's "
+            "output token limit (model=%s).",
+            getattr(response, "model", model_name),
+        )
+        raise CourseGenerationError(
+            "The AI provider truncated the course proposal at its output limit."
+        )
+
     try:
         payload = json.loads(content)
+    except json.JSONDecodeError as error:
+        logger.warning(
+            "Course generation response was not valid JSON "
+            "(finish_reason=%s, line=%s, column=%s).",
+            getattr(choice, "finish_reason", None),
+            error.lineno,
+            error.colno,
+        )
+        raise CourseGenerationError(
+            "The AI provider returned a course proposal that failed validation."
+        ) from error
+
+    try:
         return CourseDraftProposal.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError) as error:
+    except ValidationError as error:
+        logger.warning(
+            "Course generation response failed schema validation: %s",
+            error.errors(include_input=False, include_url=False),
+        )
         raise CourseGenerationError(
             "The AI provider returned a course proposal that failed validation."
         ) from error

@@ -68,22 +68,54 @@ class CourseGeneratorTests(unittest.TestCase):
         self.client.chat.completions.create.assert_called_once()
         call = self.client.chat.completions.create.call_args.kwargs
         self.assertEqual(call["response_format"], {"type": "json_object"})
+        self.assertEqual(call["max_tokens"], 8192)
+        self.assertIn("milestones,", call["messages"][0]["content"])
+        self.assertIn("arrays of strings", call["messages"][0]["content"])
+        self.assertIn("at most three modules", call["messages"][0]["content"])
+        self.assertIn("two lessons per module", call["messages"][0]["content"])
+
+    def test_logs_generated_provider_content(self) -> None:
+        content = json.dumps(valid_proposal())
+
+        with self.assertLogs("app.services.course_generator", level="INFO") as logs:
+            generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+
+        self.assertIn(content, "\n".join(logs.output))
 
     def test_rejects_malformed_provider_content(self) -> None:
+        content = '{"title":"incomplete"}'
         self.client.chat.completions.create.return_value.choices[0].message.content = (
-            '{"title":"incomplete"}'
+            content
         )
 
-        with self.assertRaises(CourseGenerationError):
-            generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+        with self.assertLogs("app.services.course_generator", level="WARNING") as logs:
+            with self.assertRaises(CourseGenerationError):
+                generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+
+        self.assertIn("schema validation", "\n".join(logs.output))
+        self.assertIn("description", "\n".join(logs.output))
 
     def test_rejects_non_json_provider_content(self) -> None:
         self.client.chat.completions.create.return_value.choices[0].message.content = (
             "not json"
         )
 
-        with self.assertRaises(CourseGenerationError):
-            generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+        with self.assertLogs("app.services.course_generator", level="WARNING") as logs:
+            with self.assertRaises(CourseGenerationError):
+                generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+
+        self.assertIn("finish_reason=None", "\n".join(logs.output))
+
+    def test_rejects_truncated_provider_content(self) -> None:
+        choice = self.client.chat.completions.create.return_value.choices[0]
+        choice.message.content = '{"title":"incomplete"'
+        choice.finish_reason = "length"
+
+        with self.assertLogs("app.services.course_generator", level="WARNING") as logs:
+            with self.assertRaises(CourseGenerationError):
+                generate_course_draft(CourseDraftRequest(topic="Testing"), self.client)
+
+        self.assertIn("output token limit", "\n".join(logs.output))
 
     def test_rejects_missing_provider_content(self) -> None:
         self.client.chat.completions.create.return_value.choices[0].message.content = (
