@@ -9,6 +9,7 @@ from app.schemas.course import Identifier, StrictModel
 class GenerateInteractionRequest(StrictModel):
     kind: Literal["action"]
     action: Literal["quiz-me"]
+    lesson_id: Identifier | None = None
 
 
 class SubmitQuizAnswerRequest(StrictModel):

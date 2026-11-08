@@ -2,7 +2,7 @@ import logging
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, ValidationError
 from supabase import Client
 
@@ -32,6 +32,11 @@ AuthenticatedUser = Annotated[int, Depends(require_user_id)]
 class StartSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     course_id: UUID
+
+
+class GenerateLessonActivityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    regenerate: bool = False
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
@@ -193,6 +198,38 @@ def _full_session(
     }
 
 
+def _is_current_lesson(session: dict[str, Any], lesson_id: str) -> bool:
+    return (
+        session.get("status") == "active"
+        and session.get("current_lesson_id") == lesson_id
+    )
+
+
+def _ensure_lesson_reviewable(
+    database: Client,
+    session: dict[str, Any],
+    lesson_id: str,
+) -> None:
+    if _is_current_lesson(session, lesson_id):
+        return
+    response = _database_call(
+        "load lesson progress",
+        lambda: (
+            database.table("lesson_progress")
+            .select("lesson_id")
+            .eq("session_id", session["id"])
+            .eq("lesson_id", lesson_id)
+            .limit(1)
+            .execute()
+        ),
+    )
+    if not _rows(response):
+        raise HTTPException(
+            status_code=409,
+            detail="This lesson is neither current nor completed.",
+        )
+
+
 def _quiz_interaction_response(row: dict[str, Any]) -> dict[str, Any]:
     try:
         quiz = GeneratedQuiz.model_validate(row["content"])
@@ -340,46 +377,13 @@ def create_lesson_activity(
     ],
     user_id: AuthenticatedUser,
     database: Database,
+    payload: GenerateLessonActivityRequest | None = Body(default=None),
 ) -> dict[str, Any]:
     session = _session(database, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
     _ensure_session_course_access(database, session, user_id)
-    if session.get("status") != "active":
-        raise HTTPException(
-            status_code=409, detail="This learning session is complete."
-        )
-    if session.get("current_lesson_id") != lesson_id:
-        raise HTTPException(status_code=409, detail="This is not the current lesson.")
-
-    existing_response = _database_call(
-        "load lesson activity",
-        lambda: (
-            database.table("activities")
-            .select("*")
-            .eq("session_id", str(session_id))
-            .eq("lesson_id", lesson_id)
-            .limit(1)
-            .execute()
-        ),
-    )
-    existing_activities = _rows(existing_response)
-    if existing_activities:
-        try:
-            return LessonActivityResponse.model_validate(
-                existing_activities[0]
-            ).model_dump(mode="json")
-        except (TypeError, ValueError, ValidationError) as error:
-            logger.exception(
-                "Stored lesson activity for session %s is invalid.", session_id
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "code": "invalid_lesson_activity",
-                    "message": "The lesson activity is unavailable.",
-                },
-            ) from error
+    _ensure_lesson_reviewable(database, session, lesson_id)
 
     course = _course(database, session["course_id"])
     version = _version(database, session["course_version_id"])
@@ -396,35 +400,60 @@ def create_lesson_activity(
             },
         )
     plan = _plan(version)
-    current_module = next(
+    target_module = next(
         (
             module
             for module in plan.modules
-            if module.module_id == session.get("current_module_id")
+            if any(lesson.lesson_id == lesson_id for lesson in module.lessons)
         ),
         None,
     )
-    current_lesson = (
+    target_lesson = (
         next(
-            (
-                lesson
-                for lesson in current_module.lessons
-                if lesson.lesson_id == lesson_id
-            ),
-            None,
+            lesson for lesson in target_module.lessons if lesson.lesson_id == lesson_id
         )
-        if current_module
+        if target_module
         else None
     )
-    if current_lesson is None:
-        raise HTTPException(status_code=409, detail="This is not the current lesson.")
+    if target_module is None or target_lesson is None:
+        raise HTTPException(status_code=409, detail="This lesson is not in the course.")
+
+    existing_response = _database_call(
+        "load lesson activity",
+        lambda: (
+            database.table("activities")
+            .select("*")
+            .eq("session_id", str(session_id))
+            .eq("lesson_id", lesson_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ),
+    )
+    existing_activities = _rows(existing_response)
+    if existing_activities and not (payload and payload.regenerate):
+        try:
+            return LessonActivityResponse.model_validate(
+                existing_activities[0]
+            ).model_dump(mode="json")
+        except (TypeError, ValueError, ValidationError) as error:
+            logger.exception(
+                "Stored lesson activity for session %s is invalid.", session_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "invalid_lesson_activity",
+                    "message": "The lesson activity is unavailable.",
+                },
+            ) from error
 
     try:
         activity = generate_lesson_activity(
             course["title"],
             plan,
-            current_module,
-            current_lesson,
+            target_module,
+            target_lesson,
         )
     except ProviderConfigurationError as error:
         logger.error("Lesson activity generation is not configured: %s", error)
@@ -492,6 +521,57 @@ def create_lesson_activity(
         ) from error
 
 
+@router.get(
+    "/{session_id}/lessons/{lesson_id}/activities",
+    response_model=list[LessonActivityResponse],
+)
+def list_lesson_activities(
+    session_id: UUID,
+    lesson_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=80,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        ),
+    ],
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> list[dict[str, Any]]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    _ensure_session_course_access(database, session, user_id)
+    _ensure_lesson_reviewable(database, session, lesson_id)
+    response = _database_call(
+        "list lesson activities",
+        lambda: (
+            database.table("activities")
+            .select("*")
+            .eq("session_id", str(session_id))
+            .eq("lesson_id", lesson_id)
+            .order("created_at", desc=True)
+            .execute()
+        ),
+    )
+    try:
+        return [
+            LessonActivityResponse.model_validate(row).model_dump(mode="json")
+            for row in _rows(response)
+        ]
+    except (TypeError, ValueError, ValidationError) as error:
+        logger.exception(
+            "Stored lesson activity for session %s is invalid.", session_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_lesson_activity",
+                "message": "The lesson activity is unavailable.",
+            },
+        ) from error
+
+
 @router.get("/{session_id}/interactions", response_model=list[QuizInteractionResponse])
 def list_learning_interactions(
     session_id: UUID,
@@ -530,13 +610,10 @@ def create_learning_interaction(
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
     _ensure_session_course_access(database, session, user_id)
-    if session.get("status") != "active":
-        raise HTTPException(
-            status_code=409, detail="This learning session is complete."
-        )
-    lesson_id = session.get("current_lesson_id")
+    lesson_id = payload.lesson_id or session.get("current_lesson_id")
     if not lesson_id:
         raise HTTPException(status_code=409, detail="There is no current lesson.")
+    _ensure_lesson_reviewable(database, session, lesson_id)
 
     course = _course(database, session["course_id"])
     version = _version(database, session["course_version_id"])
@@ -553,31 +630,31 @@ def create_learning_interaction(
             },
         )
     plan = _plan(version)
-    current_module = next(
+    target_module = next(
         (
             module
             for module in plan.modules
-            if module.module_id == session.get("current_module_id")
+            if any(lesson.lesson_id == lesson_id for lesson in module.lessons)
         ),
         None,
     )
-    current_lesson = (
+    target_lesson = (
         next(
             (
                 lesson
-                for lesson in current_module.lessons
+                for lesson in target_module.lessons
                 if lesson.lesson_id == lesson_id
             ),
             None,
         )
-        if current_module
+        if target_module
         else None
     )
-    if current_lesson is None:
-        raise HTTPException(status_code=409, detail="There is no current lesson.")
+    if target_module is None or target_lesson is None:
+        raise HTTPException(status_code=409, detail="This lesson is not in the course.")
 
     try:
-        quiz = generate_quiz(course["title"], current_module, current_lesson)
+        quiz = generate_quiz(course["title"], target_module, target_lesson)
     except ProviderConfigurationError as error:
         logger.error("Quiz generation is not configured: %s", error)
         raise HTTPException(
@@ -651,10 +728,6 @@ def submit_learning_interaction_answer(
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
     _ensure_session_course_access(database, session, user_id)
-    if session.get("status") != "active":
-        raise HTTPException(
-            status_code=409, detail="This learning session is complete."
-        )
     response = _database_call(
         "load learning interaction",
         lambda: (
@@ -670,8 +743,7 @@ def submit_learning_interaction_answer(
     if not rows:
         raise HTTPException(status_code=404, detail="Learning interaction not found.")
     row = rows[0]
-    if row.get("lesson_id") != session.get("current_lesson_id"):
-        raise HTTPException(status_code=409, detail="This is not the current lesson.")
+    _ensure_lesson_reviewable(database, session, str(row.get("lesson_id", "")))
     try:
         quiz = GeneratedQuiz.model_validate(row["content"])
     except (KeyError, TypeError, ValueError, ValidationError) as error:

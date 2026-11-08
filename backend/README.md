@@ -41,28 +41,32 @@ is checked both by the API and when the database creates a learning session.
 - `GET /api/v1/learning-sessions/{session_id}` loads a session pinned to its
   published course version.
 - `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/activities`
-  generates and saves the current lesson's validated `text-and-images` activity.
-  Repeated requests return the saved activity.
+  returns the latest saved activity for the current or a completed lesson.
+  Send `{"regenerate": true}` to save a new activity version without removing
+  earlier versions.
 - `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/complete`
   saves completion and advances to the next lesson.
 
 Apply migration `00004_create_lesson_activities.sql` to persist lesson
-activities.
+activities, then apply migration `00008_allow_lesson_activity_history.sql` to
+preserve regenerated activity versions.
 
 Apply migration `00007_create_learning_interactions.sql` to persist guided
 learning interactions. The session API currently supports the `quiz-me` action:
 it generates a validated multiple-choice question for the current lesson,
 records the learner's selected option, and returns feedback. Learners can reload
-the session and resume their saved quiz interactions.
+the session and resume their saved quiz interactions. It can also generate
+quizzes for completed lessons without changing lesson progress.
 
 The user and learning-session tables have RLS enabled without browser-facing
 policies. The API uses the server-side service-role key and enforces ownership
 using the email account's internal user ID.
 
-## Course generation diagnostics
+## AI generation diagnostics
 
 Course-generation responses from the AI provider are written to backend logs
-at `INFO` level. Schema validation failures include the failed fields at
-`WARNING` level, while the API continues to return a generic error to clients.
-Generated output may reflect the course brief, so restrict access to backend
-logs accordingly.
+at `INFO` level. AI-generation schema validation failures include the failed
+fields at `WARNING` level, and truncated lesson activity responses are
+identified in the backend logs. The API continues to return generic errors to
+clients. Generated output may reflect course briefs and learner context, so
+restrict access to backend logs accordingly.

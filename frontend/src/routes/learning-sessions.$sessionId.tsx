@@ -17,6 +17,12 @@ export const Route = createFileRoute("/learning-sessions/$sessionId")({
 function LearningSessionPage() {
   const { sessionId } = Route.useParams();
   const queryClient = useQueryClient();
+  const [selectedReviewLessonId, setSelectedReviewLessonId] = useState<
+    string | null
+  >(null);
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
+    null,
+  );
   const sessionKey = ["learning-session", sessionId];
   const session = useQuery({
     queryKey: sessionKey,
@@ -34,8 +40,9 @@ function LearningSessionPage() {
         { method: "POST" },
       ),
     onSuccess: async (updatedSession) => {
-      queryClient.setQueryData(sessionKey, updatedSession);
-      await queryClient.invalidateQueries({ queryKey: ["learning-sessions"] });
+        setSelectedReviewLessonId(null);
+        queryClient.setQueryData(sessionKey, updatedSession);
+        await queryClient.invalidateQueries({ queryKey: ["learning-sessions"] });
     },
   });
   const interactionsKey = ["learning-interactions", sessionId];
@@ -49,13 +56,17 @@ function LearningSessionPage() {
       ),
   });
   const generateQuiz = useMutation({
-    mutationFn: () =>
+    mutationFn: (lessonId: string) =>
       apiRequest(
         `/api/v1/learning-sessions/${sessionId}/interactions`,
         QuizInteractionSchema,
         {
           method: "POST",
-          body: JSON.stringify({ kind: "action", action: "quiz-me" }),
+          body: JSON.stringify({
+            kind: "action",
+            action: "quiz-me",
+            lesson_id: lessonId,
+          }),
         },
       ),
     onSuccess: async () => {
@@ -96,19 +107,62 @@ function LearningSessionPage() {
   const currentLesson = currentModule?.lessons.find(
     (lesson) => lesson.lesson_id === currentLessonId,
   );
-  const activity = useQuery({
-    queryKey: ["lesson-activity", sessionId, currentLessonId],
-    enabled: Boolean(data && data.status === "active" && currentLesson),
+  const reviewLesson = data?.plan.modules
+    .flatMap((module) => module.lessons)
+    .find((lesson) => lesson.lesson_id === selectedReviewLessonId);
+  const viewedLesson = reviewLesson ?? currentLesson;
+  const viewedModule = viewedLesson
+    ? data?.plan.modules.find((module) =>
+        module.lessons.some(
+          (lesson) => lesson.lesson_id === viewedLesson.lesson_id,
+        ),
+      )
+    : undefined;
+  const isReviewing = Boolean(
+    viewedLesson && viewedLesson.lesson_id !== currentLesson?.lesson_id,
+  );
+  const activityKey = [
+    "lesson-activities",
+    sessionId,
+    viewedLesson?.lesson_id,
+  ] as const;
+  const activities = useQuery({
+    queryKey: activityKey,
+    enabled: Boolean(data && viewedLesson),
     retry: false,
     queryFn: () => {
-      if (!currentLesson) {
-        throw new Error("There is no current lesson to load.");
+      if (!viewedLesson) {
+        throw new Error("There is no lesson to load.");
       }
-      return apiRequest(
-        `/api/v1/learning-sessions/${sessionId}/lessons/${currentLesson.lesson_id}/activities`,
-        LessonActivitySchema,
-        { method: "POST" },
+      const path = `/api/v1/learning-sessions/${sessionId}/lessons/${viewedLesson.lesson_id}/activities`;
+      return apiRequest(path, LessonActivitySchema.array()).then(
+        async (savedActivities) =>
+          savedActivities.length > 0
+            ? savedActivities
+            : [
+                await apiRequest(path, LessonActivitySchema, {
+                  method: "POST",
+                  body: JSON.stringify({}),
+                }),
+              ],
       );
+    },
+  });
+  const regenerateActivity = useMutation({
+    mutationFn: (lessonId: string) =>
+      apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/lessons/${lessonId}/activities`,
+        LessonActivitySchema,
+        {
+          method: "POST",
+          body: JSON.stringify({ regenerate: true }),
+        },
+      ),
+    onSuccess: async (newActivity, lessonId) => {
+      setSelectedActivityId(newActivity.id);
+      await queryClient.invalidateQueries({
+        queryKey: ["lesson-activities", sessionId, lessonId],
+      });
     },
   });
 
@@ -130,16 +184,19 @@ function LearningSessionPage() {
 
   const totalLessons = lessonCount(data.plan);
   const completedLessons = data.completed_lessons.length;
-  const currentQuiz = currentLesson
+  const viewedQuiz = viewedLesson
     ? [...(interactions.data ?? [])]
         .reverse()
-        .find((item) => item.lesson_id === currentLesson.lesson_id)
+        .find((item) => item.lesson_id === viewedLesson.lesson_id)
     : undefined;
   const selectedQuizOption =
-    currentQuiz?.selected_option ??
-    (quizSelection && quizSelection.interactionId === currentQuiz?.id
+    viewedQuiz?.selected_option ??
+    (quizSelection && quizSelection.interactionId === viewedQuiz?.id
       ? quizSelection.selectedOption
       : null);
+  const viewedActivity =
+    activities.data?.find((item) => item.id === selectedActivityId) ??
+    activities.data?.[0];
 
   return (
     <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[280px_minmax(0,1fr)] sm:px-8">
@@ -173,19 +230,35 @@ function LearningSessionPage() {
                     (item) => item.lesson_id === lesson.lesson_id,
                   );
                   const current = lesson.lesson_id === data.current_lesson_id;
+                  const selected =
+                    lesson.lesson_id ===
+                    (isReviewing
+                      ? viewedLesson?.lesson_id
+                      : data.current_lesson_id);
                   return (
                     <li
                       key={lesson.lesson_id}
-                      className={`rounded-lg px-3 py-2 text-sm ${
-                        current
-                          ? "bg-indigo-50 font-semibold text-indigo-800"
-                          : done
-                            ? "text-emerald-700"
-                            : "text-slate-500"
-                      }`}
+                      className="rounded-lg"
                     >
-                      {done ? "✓ " : ""}
-                      {lesson.title}
+                      <button
+                        type="button"
+                        disabled={!done && !current}
+                        aria-current={selected ? "step" : undefined}
+                        onClick={() =>
+                          setSelectedReviewLessonId(current ? null : lesson.lesson_id)
+                        }
+                        className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
+                          selected
+                            ? "bg-indigo-50 font-semibold text-indigo-800"
+                            : done
+                              ? "text-emerald-700 hover:bg-emerald-50"
+                              : "cursor-not-allowed text-slate-400"
+                        }`}
+                      >
+                        {done ? "✓ " : ""}
+                        {lesson.title}
+                        {isReviewing && selected ? " · Review" : ""}
+                      </button>
                     </li>
                   );
                 })}
@@ -196,7 +269,7 @@ function LearningSessionPage() {
       </aside>
 
       <section className="min-w-0">
-        {data.status === "completed" || !currentLesson ? (
+        {data.status === "completed" && !viewedLesson ? (
           <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-8 sm:p-12">
             <p className="text-sm font-semibold uppercase tracking-[0.15em] text-emerald-700">
               Course complete
@@ -214,25 +287,36 @@ function LearningSessionPage() {
               Back to my learning
             </Link>
           </div>
-        ) : (
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10">
+        ) : viewedLesson ? (
+          <>
+            {data.status === "completed" && (
+              <div className="mb-6 rounded-2xl bg-emerald-50 px-5 py-4 text-emerald-800">
+                Course complete. Select any completed lesson to review it.
+              </div>
+            )}
+            <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10">
+            {isReviewing && (
+              <p className="mb-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+                Reviewing a completed lesson. Your course progress won’t change.
+              </p>
+            )}
             <p className="text-sm font-semibold uppercase tracking-[0.15em] text-indigo-600">
-              {currentModule?.title}
-              {currentLesson.estimated_minutes
-                ? ` · ${currentLesson.estimated_minutes} min`
+              {viewedModule?.title}
+              {viewedLesson.estimated_minutes
+                ? ` · ${viewedLesson.estimated_minutes} min`
                 : ""}
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
-              {currentLesson.title}
+              {viewedLesson.title}
             </h2>
             <p className="mt-5 text-lg leading-8 text-slate-700">
-              {currentLesson.purpose}
+              {viewedLesson.purpose}
             </p>
 
             <section className="mt-8 rounded-2xl bg-slate-50 p-6">
               <h3 className="font-semibold text-slate-950">By the end, you can</h3>
               <ul className="mt-3 space-y-2 text-slate-700">
-                {currentLesson.objectives.map((objective) => (
+                {viewedLesson.objectives.map((objective) => (
                   <li key={objective} className="flex gap-3 leading-7">
                     <span className="text-indigo-600">•</span>
                     {objective}
@@ -243,7 +327,7 @@ function LearningSessionPage() {
             <section className="mt-7">
               <h3 className="font-semibold text-slate-950">Key topics</h3>
               <ul className="mt-3 flex flex-wrap gap-2">
-                {currentLesson.key_topics.map((topic) => (
+                {viewedLesson.key_topics.map((topic) => (
                   <li
                     key={topic}
                     className="rounded-full bg-indigo-50 px-3 py-1.5 text-sm text-indigo-800"
@@ -260,38 +344,71 @@ function LearningSessionPage() {
               <h3 className="text-xl font-semibold text-slate-950">
                 Lesson activity
               </h3>
-              {activity.isPending && (
+              {activities.isPending && (
                 <p className="mt-4 text-slate-600">
                   Preparing your lesson material…
                 </p>
               )}
-              {activity.isError && (
+              {activities.isError && (
                 <div className="mt-4">
                   <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">
-                    {activity.error.message}
+                    {activities.error.message}
                   </p>
                   <button
                     type="button"
-                    onClick={() => void activity.refetch()}
+                    onClick={() => void activities.refetch()}
                     className="mt-3 font-semibold text-indigo-700 hover:text-indigo-900"
                   >
                     Try again
                   </button>
                 </div>
               )}
-              {activity.data && (
+              {viewedActivity && (
                 <>
+                  {activities.data && activities.data.length > 1 && (
+                    <label className="mt-4 block text-sm font-medium text-slate-700">
+                      Saved versions
+                      <select
+                        value={viewedActivity.id}
+                        onChange={(event) =>
+                          setSelectedActivityId(event.currentTarget.value)
+                        }
+                        className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      >
+                        {activities.data.map((savedActivity, index) => (
+                          <option key={savedActivity.id} value={savedActivity.id}>
+                            {index === 0 ? "Latest activity" : `Version ${activities.data.length - index}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => regenerateActivity.mutate(viewedLesson.lesson_id)}
+                    disabled={regenerateActivity.isPending}
+                    className="mt-4 rounded-lg border border-indigo-600 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {regenerateActivity.isPending
+                      ? "Generating a new activity…"
+                      : "Generate a new activity"}
+                  </button>
+                  {regenerateActivity.isError && (
+                    <p role="alert" className="mt-3 rounded-xl bg-red-50 p-4 text-red-800">
+                      {regenerateActivity.error.message}
+                    </p>
+                  )}
                   <MarkdownRenderer
                     className="mt-5"
-                    content={activity.data.content.content}
+                    content={viewedActivity.content.content}
                   />
-                  {activity.data.content.image_descriptions.length > 0 && (
+                  {viewedActivity.content.image_descriptions.length > 0 && (
                     <section className="mt-6 rounded-xl bg-slate-50 p-4">
                       <h4 className="font-semibold text-slate-900">
                         Illustration ideas
                       </h4>
                       <ul className="mt-2 list-inside list-disc space-y-2 text-sm text-slate-600">
-                        {activity.data.content.image_descriptions.map(
+                        {viewedActivity.content.image_descriptions.map(
                           (description) => (
                             <li key={description}>{description}</li>
                           ),
@@ -314,14 +431,14 @@ function LearningSessionPage() {
                 onClick={() => {
                   answerQuiz.reset();
                   setQuizSelection(null);
-                  generateQuiz.mutate();
+                  generateQuiz.mutate(viewedLesson.lesson_id);
                 }}
                 disabled={generateQuiz.isPending}
                 className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
               >
                 {generateQuiz.isPending
                   ? "Preparing a question…"
-                  : currentQuiz
+                  : viewedQuiz
                     ? "Try another question"
                     : "Quiz me"}
               </button>
@@ -335,26 +452,26 @@ function LearningSessionPage() {
                   {interactions.error.message}
                 </p>
               )}
-              {currentQuiz && (
+              {viewedQuiz && (
                 <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5">
                   <h4 className="font-semibold leading-7 text-slate-950">
-                    {currentQuiz.question}
+                    {viewedQuiz.question}
                   </h4>
                   <fieldset className="mt-4 space-y-3">
                     <legend className="sr-only">Choose your answer</legend>
-                    {currentQuiz.options.map((option, index) => (
+                    {viewedQuiz.options.map((option, index) => (
                       <label
-                        key={`${currentQuiz.id}-${index}`}
+                        key={`${viewedQuiz.id}-${index}`}
                         className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:border-indigo-300"
                       >
                         <input
                           type="radio"
-                          name={`quiz-${currentQuiz.id}`}
+                          name={`quiz-${viewedQuiz.id}`}
                           checked={selectedQuizOption === index}
-                          disabled={currentQuiz.selected_option !== null || answerQuiz.isPending}
+                          disabled={viewedQuiz.selected_option !== null || answerQuiz.isPending}
                           onChange={() =>
                             setQuizSelection({
-                              interactionId: currentQuiz.id,
+                              interactionId: viewedQuiz.id,
                               selectedOption: index,
                             })
                           }
@@ -364,7 +481,7 @@ function LearningSessionPage() {
                       </label>
                     ))}
                   </fieldset>
-                  {currentQuiz.selected_option === null && (
+                  {viewedQuiz.selected_option === null && (
                     <>
                       {answerQuiz.isError && (
                         <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-red-800">
@@ -376,7 +493,7 @@ function LearningSessionPage() {
                         onClick={() => {
                           if (selectedQuizOption !== null) {
                             answerQuiz.mutate({
-                              interactionId: currentQuiz.id,
+                              interactionId: viewedQuiz.id,
                               selectedOption: selectedQuizOption,
                             });
                           }
@@ -388,49 +505,58 @@ function LearningSessionPage() {
                       </button>
                     </>
                   )}
-                  {currentQuiz.selected_option !== null && (
+                  {viewedQuiz.selected_option !== null && (
                     <div
                       className={`mt-4 rounded-xl p-4 ${
-                        currentQuiz.is_correct
+                        viewedQuiz.is_correct
                           ? "bg-emerald-50 text-emerald-800"
                           : "bg-amber-50 text-amber-900"
                       }`}
                     >
                       <p className="font-semibold">
-                        {currentQuiz.is_correct ? "Correct!" : "Not quite."}
+                        {viewedQuiz.is_correct ? "Correct!" : "Not quite."}
                       </p>
-                      <p className="mt-2 leading-7">{currentQuiz.explanation}</p>
+                      <p className="mt-2 leading-7">{viewedQuiz.explanation}</p>
                     </div>
                   )}
                 </div>
               )}
             </section>
             <section className="mt-7 rounded-2xl border border-indigo-100 p-5">
-              <h3 className="font-semibold text-slate-950">Completion check</h3>
+              <h3 className="font-semibold text-slate-950">
+                {isReviewing ? "Review checkpoint" : "Completion check"}
+              </h3>
               <p className="mt-2 leading-7 text-slate-700">
-                {currentLesson.completion_check}
+                {viewedLesson.completion_check}
               </p>
-              <p className="mt-3 text-sm text-slate-500">
-                When you’re ready, mark this lesson complete. Your next lesson
-                will be saved automatically.
-              </p>
+              {!isReviewing && (
+                <p className="mt-3 text-sm text-slate-500">
+                  When you’re ready, mark this lesson complete. Your next lesson
+                  will be saved automatically.
+                </p>
+              )}
             </section>
 
-            {complete.isError && (
-              <p role="alert" className="mt-5 rounded-xl bg-red-50 p-4 text-red-800">
-                {complete.error.message}
-              </p>
+            {!isReviewing && currentLesson && data.status === "active" && (
+              <>
+                {complete.isError && (
+                  <p role="alert" className="mt-5 rounded-xl bg-red-50 p-4 text-red-800">
+                    {complete.error.message}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => complete.mutate(currentLesson.lesson_id)}
+                  disabled={complete.isPending}
+                  className="mt-7 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {complete.isPending ? "Saving progress…" : "Mark lesson complete"}
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => complete.mutate(currentLesson.lesson_id)}
-              disabled={complete.isPending}
-              className="mt-7 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
-            >
-              {complete.isPending ? "Saving progress…" : "Mark lesson complete"}
-            </button>
-          </article>
-        )}
+            </article>
+          </>
+        ) : null}
       </section>
     </main>
   );
