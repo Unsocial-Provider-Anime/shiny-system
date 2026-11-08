@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ from app.api.auth import router as auth_router
 from app.api.courses import require_user_id
 from app.api.learning_sessions import router as learning_sessions_router
 from app.database.supabase import get_supabase_client
+from app.schemas.activity import GeneratedLessonActivity
 
 COURSE_ID = str(uuid4())
 VERSION_ID = str(uuid4())
@@ -75,6 +77,7 @@ class FakeDatabase:
             ],
             "learning_sessions": [],
             "lesson_progress": [],
+            "activities": [],
         }
         self.rpc_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -171,6 +174,9 @@ class FakeQuery:
         table_rows = self.database.table_data[self.table_name]
         if self.insert_data is not None:
             row = {**self.insert_data, "id": 42}
+            if self.table_name == "activities":
+                row["id"] = str(uuid4())
+                row["created_at"] = "2026-11-08T10:00:00Z"
             table_rows.append(row)
             return SimpleNamespace(data=[row])
         rows = [
@@ -301,6 +307,95 @@ class LearningSessionApiTests(unittest.TestCase):
             response.json()["completed_lessons"][0]["lesson_id"],
             "first",
         )
+
+    def test_activity_generation_is_saved_and_reused(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        activity = {
+            "presentation_format": "text-and-images",
+            "content": {
+                "type": "text-and-images",
+                "content": "## A clear explanation\n\nA worked example.",
+                "image_descriptions": ["A simple diagram of the concept."],
+            },
+        }
+        with (
+            self.make_client(42, database) as client,
+            patch(
+                "app.api.learning_sessions.generate_lesson_activity",
+                return_value=GeneratedLessonActivity.model_validate(activity),
+            ) as generate,
+        ):
+            first = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+            second = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["content"], activity["content"])
+        self.assertEqual(second.json(), first.json())
+        generate.assert_called_once()
+        self.assertEqual(len(database.table_data["activities"]), 1)
+
+    def test_activity_generation_only_allows_the_current_lesson(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        with (
+            self.make_client(42, database) as client,
+            patch("app.api.learning_sessions.generate_lesson_activity") as generate,
+        ):
+            response = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/second/activities"
+            )
+
+        self.assertEqual(response.status_code, 409)
+        generate.assert_not_called()
+
+    def test_activity_generation_requires_session_ownership(self) -> None:
+        database = FakeDatabase()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 7,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        with (
+            self.make_client(42, database) as client,
+            patch("app.api.learning_sessions.generate_lesson_activity") as generate,
+        ):
+            response = client.post(
+                f"/api/v1/learning-sessions/{SESSION_ID}/lessons/first/activities"
+            )
+
+        self.assertEqual(response.status_code, 404)
+        generate.assert_not_called()
 
     def test_email_registration_creates_a_demo_session_without_password(self) -> None:
         database = FakeDatabase()

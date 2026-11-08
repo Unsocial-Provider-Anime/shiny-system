@@ -3,8 +3,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   apiRequest,
   lessonCount,
+  LessonActivitySchema,
   LearningSessionSchema,
 } from "@/lib/api";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
 export const Route = createFileRoute("/learning-sessions/$sessionId")({
   component: LearningSessionPage,
@@ -34,6 +36,30 @@ function LearningSessionPage() {
       await queryClient.invalidateQueries({ queryKey: ["learning-sessions"] });
     },
   });
+  const data = session.data;
+  const currentModuleId = data?.current_module_id;
+  const currentLessonId = data?.current_lesson_id;
+  const currentModule = data?.plan.modules.find(
+    (module) => module.module_id === currentModuleId,
+  );
+  const currentLesson = currentModule?.lessons.find(
+    (lesson) => lesson.lesson_id === currentLessonId,
+  );
+  const activity = useQuery({
+    queryKey: ["lesson-activity", sessionId, currentLessonId],
+    enabled: Boolean(data && data.status === "active" && currentLesson),
+    retry: false,
+    queryFn: () => {
+      if (!currentLesson) {
+        throw new Error("There is no current lesson to load.");
+      }
+      return apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/lessons/${currentLesson.lesson_id}/activities`,
+        LessonActivitySchema,
+        { method: "POST" },
+      );
+    },
+  });
 
   if (session.isPending) {
     return <main className="mx-auto max-w-5xl px-5 py-12">Loading your lesson…</main>;
@@ -47,16 +73,12 @@ function LearningSessionPage() {
       </main>
     );
   }
+  if (!data) {
+    return <main className="mx-auto max-w-5xl px-5 py-12">Loading your lesson…</main>;
+  }
 
-  const data = session.data;
   const totalLessons = lessonCount(data.plan);
   const completedLessons = data.completed_lessons.length;
-  const currentModule = data.plan.modules.find(
-    (module) => module.module_id === data.current_module_id,
-  );
-  const currentLesson = currentModule?.lessons.find(
-    (lesson) => lesson.lesson_id === data.current_lesson_id,
-  );
 
   return (
     <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[280px_minmax(0,1fr)] sm:px-8">
@@ -169,6 +191,55 @@ function LearningSessionPage() {
                   </li>
                 ))}
               </ul>
+            </section>
+            <section
+              aria-live="polite"
+              className="mt-7 rounded-2xl border border-slate-200 p-6"
+            >
+              <h3 className="text-xl font-semibold text-slate-950">
+                Lesson activity
+              </h3>
+              {activity.isPending && (
+                <p className="mt-4 text-slate-600">
+                  Preparing your lesson material…
+                </p>
+              )}
+              {activity.isError && (
+                <div className="mt-4">
+                  <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">
+                    {activity.error.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void activity.refetch()}
+                    className="mt-3 font-semibold text-indigo-700 hover:text-indigo-900"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+              {activity.data && (
+                <>
+                  <MarkdownRenderer
+                    className="mt-5"
+                    content={activity.data.content.content}
+                  />
+                  {activity.data.content.image_descriptions.length > 0 && (
+                    <section className="mt-6 rounded-xl bg-slate-50 p-4">
+                      <h4 className="font-semibold text-slate-900">
+                        Illustration ideas
+                      </h4>
+                      <ul className="mt-2 list-inside list-disc space-y-2 text-sm text-slate-600">
+                        {activity.data.content.image_descriptions.map(
+                          (description) => (
+                            <li key={description}>{description}</li>
+                          ),
+                        )}
+                      </ul>
+                    </section>
+                  )}
+                </>
+              )}
             </section>
             <section className="mt-7 rounded-2xl border border-indigo-100 p-5">
               <h3 className="font-semibold text-slate-950">Completion check</h3>
