@@ -24,6 +24,10 @@ function LearningSessionPage() {
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
     null,
   );
+  const [selectedActivityFormat, setSelectedActivityFormat] = useState<{
+    lessonId: string;
+    format: LessonActivity["presentation_format"];
+  } | null>(null);
   const [learnerQuestion, setLearnerQuestion] = useState("");
   const sessionKey = ["learning-session", sessionId];
   const session = useQuery({
@@ -182,9 +186,18 @@ function LearningSessionPage() {
       ),
     onSuccess: async (newActivity, { lessonId }) => {
       setSelectedActivityId(newActivity.id);
+      setSelectedActivityFormat({
+        lessonId,
+        format: newActivity.presentation_format,
+      });
       await queryClient.invalidateQueries({
         queryKey: ["lesson-activities", sessionId, lessonId],
       });
+    },
+    onError: (_error, { lessonId }) => {
+      setSelectedActivityFormat((current) =>
+        current?.lessonId === lessonId ? null : current,
+      );
     },
   });
 
@@ -219,6 +232,11 @@ function LearningSessionPage() {
   const viewedActivity =
     activities.data?.find((item) => item.id === selectedActivityId) ??
     activities.data?.[0];
+  const selectedFormat =
+    selectedActivityFormat &&
+    selectedActivityFormat.lessonId === viewedLesson?.lesson_id
+      ? selectedActivityFormat.format
+      : viewedActivity?.presentation_format ?? "text-and-images";
 
   return (
     <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[280px_minmax(0,1fr)] sm:px-8">
@@ -509,16 +527,21 @@ function LearningSessionPage() {
                 <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   Present as
                   <select
-                    value={viewedActivity?.presentation_format ?? "text-and-images"}
+                    value={selectedFormat}
                     onChange={(event) => {
                       if (viewedLesson) {
+                        const presentationFormat =
+                          LessonActivitySchema.shape.presentation_format.parse(
+                            event.target.value,
+                          );
+                        setSelectedActivityFormat({
+                          lessonId: viewedLesson.lesson_id,
+                          format: presentationFormat,
+                        });
                         regenerateActivity.mutate({
                           lessonId: viewedLesson.lesson_id,
                           action: "change-format",
-                          presentationFormat:
-                            LessonActivitySchema.shape.presentation_format.parse(
-                              event.target.value,
-                            ),
+                          presentationFormat,
                         });
                       }
                     }}
