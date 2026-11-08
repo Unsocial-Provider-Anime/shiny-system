@@ -9,27 +9,161 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as MyLearningRouteImport } from './routes/my-learning'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as CoursesCourseIdRouteImport } from './routes/courses.$courseId'
+import { Route as LearningSessionsSessionIdRouteImport } from './routes/learning-sessions.$sessionId'
 
-export interface FileRoutesByFullPath {}
-export interface FileRoutesByTo {}
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyLearningRoute = MyLearningRouteImport.update({
+  id: '/my-learning',
+  path: '/my-learning',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CoursesCourseIdRoute = CoursesCourseIdRouteImport.update({
+  id: '/courses/$courseId',
+  path: '/courses/$courseId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LearningSessionsSessionIdRoute =
+  LearningSessionsSessionIdRouteImport.update({
+    id: '/learning-sessions/$sessionId',
+    path: '/learning-sessions/$sessionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+
+export interface FileRoutesByFullPath {
+  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/my-learning': typeof MyLearningRoute
+  '/signup': typeof SignupRoute
+  '/courses/$courseId': typeof CoursesCourseIdRoute
+  '/learning-sessions/$sessionId': typeof LearningSessionsSessionIdRoute
+}
+export interface FileRoutesByTo {
+  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/my-learning': typeof MyLearningRoute
+  '/signup': typeof SignupRoute
+  '/courses/$courseId': typeof CoursesCourseIdRoute
+  '/learning-sessions/$sessionId': typeof LearningSessionsSessionIdRoute
+}
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/my-learning': typeof MyLearningRoute
+  '/signup': typeof SignupRoute
+  '/courses/$courseId': typeof CoursesCourseIdRoute
+  '/learning-sessions/$sessionId': typeof LearningSessionsSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: never
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/my-learning'
+    | '/signup'
+    | '/courses/$courseId'
+    | '/learning-sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
-  to: never
-  id: '__root__'
+  to:
+    | '/'
+    | '/login'
+    | '/my-learning'
+    | '/signup'
+    | '/courses/$courseId'
+    | '/learning-sessions/$sessionId'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/my-learning'
+    | '/signup'
+    | '/courses/$courseId'
+    | '/learning-sessions/$sessionId'
   fileRoutesById: FileRoutesById
 }
-export interface RootRouteChildren {}
-
-declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {}
+export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
+  LoginRoute: typeof LoginRoute
+  MyLearningRoute: typeof MyLearningRoute
+  SignupRoute: typeof SignupRoute
+  CoursesCourseIdRoute: typeof CoursesCourseIdRoute
+  LearningSessionsSessionIdRoute: typeof LearningSessionsSessionIdRoute
 }
 
-const rootRouteChildren: RootRouteChildren = {}
+declare module '@tanstack/react-router' {
+  interface FileRoutesByPath {
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-learning': {
+      id: '/my-learning'
+      path: '/my-learning'
+      fullPath: '/my-learning'
+      preLoaderRoute: typeof MyLearningRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/courses/$courseId': {
+      id: '/courses/$courseId'
+      path: '/courses/$courseId'
+      fullPath: '/courses/$courseId'
+      preLoaderRoute: typeof CoursesCourseIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/learning-sessions/$sessionId': {
+      id: '/learning-sessions/$sessionId'
+      path: '/learning-sessions/$sessionId'
+      fullPath: '/learning-sessions/$sessionId'
+      preLoaderRoute: typeof LearningSessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+  }
+}
+
+const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
+  LoginRoute: LoginRoute,
+  MyLearningRoute: MyLearningRoute,
+  SignupRoute: SignupRoute,
+  CoursesCourseIdRoute: CoursesCourseIdRoute,
+  LearningSessionsSessionIdRoute: LearningSessionsSessionIdRoute,
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
