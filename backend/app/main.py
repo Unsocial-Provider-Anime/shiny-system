@@ -32,7 +32,7 @@ def read_root():
 def health(supabase_client: Annotated[Client, Depends(get_supabase_client)]):
     try:
         # Perform a simple query to check the database connection
-        response = supabase_client.table("user").select("*").execute()
+        response = supabase_client.table("user").select("created_at").execute()
         return {"status": "OK", "detail": response}
     except Exception as e:
         return {"status": "Error", "detail": str(e)}
