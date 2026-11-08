@@ -64,6 +64,8 @@ class FakeDatabase:
                     "title": "Testing fundamentals",
                     "description": "A course about testing.",
                     "status": "published",
+                    "visibility": "public",
+                    "created_by": 7,
                     "published_version_id": VERSION_ID,
                 }
             ],
@@ -78,6 +80,7 @@ class FakeDatabase:
             "learning_sessions": [],
             "lesson_progress": [],
             "activities": [],
+            "course_access": [],
         }
         self.rpc_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -264,6 +267,66 @@ class LearningSessionApiTests(unittest.TestCase):
         self.assertEqual(second.status_code, 201)
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(len(database.table_data["learning_sessions"]), 1)
+
+    def test_restricted_course_cannot_be_started_without_access(self) -> None:
+        database = FakeDatabase()
+        database.table_data["courses"][0]["visibility"] = "restricted"
+        with self.make_client(42, database) as client:
+            response = client.post(
+                "/api/v1/learning-sessions",
+                json={"course_id": COURSE_ID},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(database.rpc_calls, [])
+
+    def test_restricted_course_can_be_started_by_an_added_learner(self) -> None:
+        database = FakeDatabase()
+        database.table_data["courses"][0]["visibility"] = "restricted"
+        database.table_data["course_access"].append(
+            {"course_id": COURSE_ID, "user_id": 42}
+        )
+        with self.make_client(42, database) as client:
+            response = client.post(
+                "/api/v1/learning-sessions",
+                json={"course_id": COURSE_ID},
+            )
+
+        self.assertEqual(response.status_code, 201)
+
+    def test_course_owner_can_start_a_learner_session_for_restricted_course(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        database.table_data["courses"][0]["visibility"] = "restricted"
+        database.table_data["courses"][0]["created_by"] = 42
+        with self.make_client(42, database) as client:
+            response = client.post(
+                "/api/v1/learning-sessions",
+                json={"course_id": COURSE_ID},
+            )
+
+        self.assertEqual(response.status_code, 201)
+
+    def test_revoked_course_access_hides_an_existing_session(self) -> None:
+        database = FakeDatabase()
+        database.table_data["courses"][0]["visibility"] = "restricted"
+        database.table_data["course_access"].clear()
+        database.table_data["learning_sessions"].append(
+            {
+                "id": SESSION_ID,
+                "user_id": 42,
+                "course_id": COURSE_ID,
+                "course_version_id": VERSION_ID,
+                "status": "active",
+                "current_module_id": "basics",
+                "current_lesson_id": "first",
+            }
+        )
+        with self.make_client(42, database) as client:
+            response = client.get(f"/api/v1/learning-sessions/{SESSION_ID}")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_session_is_not_visible_to_another_learner(self) -> None:
         database = FakeDatabase()

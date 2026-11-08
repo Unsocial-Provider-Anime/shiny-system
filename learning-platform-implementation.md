@@ -9,6 +9,8 @@ This document assumes a new project with no existing frontend or backend behavio
 ## 2. Core product concepts
 
 - **Course:** A titled, reusable learning offering, with a description, target audience, learning outcomes, and a structured plan.
+- **Course owner:** The user who can edit a course and manage its sharing settings. Any user can own courses and also learn from public, shared, or personally owned courses.
+- **Course access:** Published courses are either public or restricted. Restricted courses are visible only to their owner and users explicitly granted access.
 - **Module:** A group of related lessons in a course.
 - **Lesson:** A bounded learning step with objectives, content guidance, activities, and a completion check.
 - **Learning session:** One learner's progress through a particular version of a course.
@@ -24,13 +26,15 @@ Keep the course plan distinct from generated lesson content. The plan describes 
 1. The author enters a topic and, optionally, a learning goal, audience or experience level, time budget, constraints, and preferred formats.
 2. The backend asks the AI to create a structured course proposal.
 3. The author reviews and edits the title, description, outcomes, modules, lessons, and activities.
-4. The author saves the course as a draft and can publish it when ready.
+4. The author saves the course as a draft with public or restricted access and can publish it when ready.
+5. For a restricted course, the owner can grant or revoke access for existing user accounts.
+6. The owner can change a published course's visibility without creating a new content version.
 
 The author should be able to revise a proposal before saving it. Do not silently publish AI-generated plans.
 
 ### Learner starting a course
 
-1. The learner browses published courses.
+1. The learner browses public courses and courses shared with them.
 2. The learner opens a course detail page and reviews its description, outcomes, requirements, and learning plan.
 3. The learner chooses **Start learning**.
 4. The backend creates a learning session tied to the course and a snapshot of its plan.
@@ -194,6 +198,10 @@ All endpoints return JSON, use consistent error objects, and require authenticat
 - `GET /api/v1/courses/{course_id}` — return course details and the published plan.
 - `PATCH /api/v1/courses/{course_id}` — update an owned draft.
 - `POST /api/v1/courses/{course_id}/publish` — publish an owned course and its current plan version.
+- `PATCH /api/v1/courses/{course_id}/visibility` — change an owned course's visibility without changing its published plan version.
+- `GET /api/v1/courses/{course_id}/access` — list users with access to an owned course.
+- `POST /api/v1/courses/{course_id}/access` — grant an existing user access by email.
+- `DELETE /api/v1/courses/{course_id}/access/{user_id}` — revoke a user's access.
 
 ### Learning sessions
 
@@ -318,7 +326,10 @@ Require a structured response matching the requested format. Keep system instruc
 ## 12. Acceptance criteria for the first usable release
 
 - An author can generate, edit, save, and publish a course plan.
+- A course owner can choose public or restricted access and manage access for existing users.
 - A learner can browse a published course and inspect its plan before starting.
+- A learner can start a public course or a restricted course shared with them; other users cannot view or start a restricted course.
+- A course owner can also start a separate learner session for their own published course.
 - Starting a course creates a session pinned to the published plan version and opens that session.
 - A learner can view the initial lesson in a learning-focused interface, not only as a chat transcript.
 - A learner can request at least one named AI action and see a validated response in the lesson experience.
