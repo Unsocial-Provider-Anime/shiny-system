@@ -173,6 +173,17 @@ export function ActivityRenderer({ activity }: Props) {
             </button>
             <button
               type="button"
+              onClick={() => {
+                if ("speechSynthesis" in window) {
+                  window.speechSynthesis.cancel();
+                }
+              }}
+              className={buttonClass}
+            >
+              Stop narration
+            </button>
+            <button
+              type="button"
               onClick={() =>
                 setSceneIndex((index) =>
                   index === 0 ? sceneCount - 1 : index - 1,
