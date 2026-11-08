@@ -8,7 +8,13 @@ from supabase import Client
 
 from app.api.courses import require_user_id
 from app.database.supabase import get_supabase_client
+from app.schemas.activity import LessonActivityResponse
 from app.schemas.course import CoursePlan
+from app.services.course_generator import (
+    CourseGenerationError,
+    ProviderConfigurationError,
+)
+from app.services.lesson_activity_generator import generate_lesson_activity
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/learning-sessions", tags=["learning sessions"])
@@ -239,6 +245,173 @@ def get_learning_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Learning session not found.")
     return _full_session(database, session)
+
+
+@router.post(
+    "/{session_id}/lessons/{lesson_id}/activities",
+    response_model=LessonActivityResponse,
+)
+def create_lesson_activity(
+    session_id: UUID,
+    lesson_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=80,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        ),
+    ],
+    user_id: AuthenticatedUser,
+    database: Database,
+) -> dict[str, Any]:
+    session = _session(database, session_id, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Learning session not found.")
+    if session.get("status") != "active":
+        raise HTTPException(
+            status_code=409, detail="This learning session is complete."
+        )
+    if session.get("current_lesson_id") != lesson_id:
+        raise HTTPException(status_code=409, detail="This is not the current lesson.")
+
+    existing_response = _database_call(
+        "load lesson activity",
+        lambda: (
+            database.table("activities")
+            .select("*")
+            .eq("session_id", str(session_id))
+            .eq("lesson_id", lesson_id)
+            .limit(1)
+            .execute()
+        ),
+    )
+    existing_activities = _rows(existing_response)
+    if existing_activities:
+        try:
+            return LessonActivityResponse.model_validate(
+                existing_activities[0]
+            ).model_dump(mode="json")
+        except (TypeError, ValueError, ValidationError) as error:
+            logger.exception(
+                "Stored lesson activity for session %s is invalid.", session_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "invalid_lesson_activity",
+                    "message": "The lesson activity is unavailable.",
+                },
+            ) from error
+
+    course = _course(database, session["course_id"])
+    version = _version(database, session["course_version_id"])
+    if (
+        course is None
+        or version is None
+        or version.get("course_id") != session["course_id"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_learning_session",
+                "message": "The learning session is unavailable.",
+            },
+        )
+    plan = _plan(version)
+    current_module = next(
+        (
+            module
+            for module in plan.modules
+            if module.module_id == session.get("current_module_id")
+        ),
+        None,
+    )
+    current_lesson = (
+        next(
+            (
+                lesson
+                for lesson in current_module.lessons
+                if lesson.lesson_id == lesson_id
+            ),
+            None,
+        )
+        if current_module
+        else None
+    )
+    if current_lesson is None:
+        raise HTTPException(status_code=409, detail="This is not the current lesson.")
+
+    try:
+        activity = generate_lesson_activity(
+            course["title"],
+            plan,
+            current_module,
+            current_lesson,
+        )
+    except ProviderConfigurationError as error:
+        logger.error("Lesson activity generation is not configured: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "lesson_activity_generation_unavailable",
+                "message": "Lesson activity generation is not configured.",
+            },
+        ) from error
+    except CourseGenerationError as error:
+        logger.warning("Lesson activity generation returned invalid content: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "invalid_generated_lesson_activity",
+                "message": "The lesson activity could not be validated. Please retry.",
+            },
+        ) from error
+    except Exception as error:
+        logger.exception("Lesson activity provider request failed.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "lesson_activity_generation_failed",
+                "message": "Lesson activity generation failed. Please retry.",
+            },
+        ) from error
+
+    inserted = _database_call(
+        "save lesson activity",
+        lambda: (
+            database.table("activities")
+            .insert(
+                {
+                    "session_id": str(session_id),
+                    "lesson_id": lesson_id,
+                    "presentation_format": activity.presentation_format,
+                    "content": activity.content.model_dump(mode="json"),
+                }
+            )
+            .execute()
+        ),
+    )
+    rows = _rows(inserted)
+    if not rows:
+        logger.error("Saving activity for session %s returned no record.", session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_database_response",
+                "message": "The lesson activity could not be saved.",
+            },
+        )
+    try:
+        return LessonActivityResponse.model_validate(rows[0]).model_dump(mode="json")
+    except (TypeError, ValueError, ValidationError) as error:
+        logger.exception("Saved lesson activity for session %s is invalid.", session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "invalid_lesson_activity",
+                "message": "The lesson activity could not be loaded.",
+            },
+        ) from error
 
 
 @router.post("/{session_id}/lessons/{lesson_id}/complete")

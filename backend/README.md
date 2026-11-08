@@ -20,8 +20,14 @@ Set a long, random `SESSION_SECRET` and use HTTPS outside development.
 - `GET /api/v1/learning-sessions` lists the signed-in learner's sessions.
 - `GET /api/v1/learning-sessions/{session_id}` loads a session pinned to its
   published course version.
+- `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/activities`
+  generates and saves the current lesson's validated `text-and-images` activity.
+  Repeated requests return the saved activity.
 - `POST /api/v1/learning-sessions/{session_id}/lessons/{lesson_id}/complete`
   saves completion and advances to the next lesson.
+
+Apply migration `00004_create_lesson_activities.sql` to persist lesson
+activities.
 
 The user and learning-session tables have RLS enabled without browser-facing
 policies. The API uses the server-side service-role key and enforces ownership

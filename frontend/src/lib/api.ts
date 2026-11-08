@@ -124,11 +124,29 @@ export const LearningSessionSchema = z
   })
   .passthrough();
 
+export const LessonActivitySchema = z
+  .object({
+    id: z.string(),
+    session_id: z.string(),
+    lesson_id: z.string(),
+    presentation_format: z.literal("text-and-images"),
+    content: z
+      .object({
+        type: z.literal("text-and-images"),
+        content: z.string(),
+        image_descriptions: z.array(z.string()),
+      })
+      .passthrough(),
+    created_at: z.string(),
+  })
+  .passthrough();
+
 export type Lesson = z.infer<typeof LessonSchema>;
 export type Module = z.infer<typeof ModuleSchema>;
 export type CoursePlan = z.infer<typeof CoursePlanSchema>;
 export type Course = z.infer<typeof CourseSchema>;
 export type LearningSession = z.infer<typeof LearningSessionSchema>;
+export type LessonActivity = z.infer<typeof LessonActivitySchema>;
 
 export function lessonCount(plan: CoursePlan): number {
   return plan.modules.reduce((total, module) => total + module.lessons.length, 0);
