@@ -49,6 +49,12 @@ is checked both by the API and when the database creates a learning session.
 Apply migration `00004_create_lesson_activities.sql` to persist lesson
 activities.
 
+Apply migration `00007_create_learning_interactions.sql` to persist guided
+learning interactions. The session API currently supports the `quiz-me` action:
+it generates a validated multiple-choice question for the current lesson,
+records the learner's selected option, and returns feedback. Learners can reload
+the session and resume their saved quiz interactions.
+
 The user and learning-session tables have RLS enabled without browser-facing
 policies. The API uses the server-side service-role key and enforces ownership
 using the email account's internal user ID.

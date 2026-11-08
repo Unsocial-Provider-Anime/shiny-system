@@ -183,12 +183,29 @@ export const LessonActivitySchema = z
   })
   .passthrough();
 
+export const QuizInteractionSchema = z
+  .object({
+    id: z.string(),
+    session_id: z.string(),
+    lesson_id: z.string(),
+    kind: z.literal("action"),
+    action: z.literal("quiz-me"),
+    question: z.string(),
+    options: z.array(z.string()),
+    selected_option: z.number().nullable(),
+    is_correct: z.boolean().nullable(),
+    explanation: z.string().nullable(),
+    created_at: z.string(),
+  })
+  .passthrough();
+
 export type Lesson = z.infer<typeof LessonSchema>;
 export type Module = z.infer<typeof ModuleSchema>;
 export type CoursePlan = z.infer<typeof CoursePlanSchema>;
 export type Course = z.infer<typeof CourseSchema>;
 export type LearningSession = z.infer<typeof LearningSessionSchema>;
 export type LessonActivity = z.infer<typeof LessonActivitySchema>;
+export type QuizInteraction = z.infer<typeof QuizInteractionSchema>;
 
 export function lessonCount(plan: CoursePlan): number {
   return plan.modules.reduce((total, module) => total + module.lessons.length, 0);

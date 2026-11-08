@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -5,6 +6,7 @@ import {
   lessonCount,
   LessonActivitySchema,
   LearningSessionSchema,
+  QuizInteractionSchema,
 } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
@@ -34,6 +36,55 @@ function LearningSessionPage() {
     onSuccess: async (updatedSession) => {
       queryClient.setQueryData(sessionKey, updatedSession);
       await queryClient.invalidateQueries({ queryKey: ["learning-sessions"] });
+    },
+  });
+  const interactionsKey = ["learning-interactions", sessionId];
+  const interactions = useQuery({
+    queryKey: interactionsKey,
+    enabled: Boolean(session.data),
+    queryFn: () =>
+      apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/interactions`,
+        QuizInteractionSchema.array(),
+      ),
+  });
+  const generateQuiz = useMutation({
+    mutationFn: () =>
+      apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/interactions`,
+        QuizInteractionSchema,
+        {
+          method: "POST",
+          body: JSON.stringify({ kind: "action", action: "quiz-me" }),
+        },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: interactionsKey });
+    },
+  });
+  const [quizSelection, setQuizSelection] = useState<{
+    interactionId: string;
+    selectedOption: number;
+  } | null>(null);
+  const answerQuiz = useMutation({
+    mutationFn: ({
+      interactionId,
+      selectedOption,
+    }: {
+      interactionId: string;
+      selectedOption: number;
+    }) =>
+      apiRequest(
+        `/api/v1/learning-sessions/${sessionId}/interactions/${interactionId}/answer`,
+        QuizInteractionSchema,
+        {
+          method: "POST",
+          body: JSON.stringify({ selected_option: selectedOption }),
+        },
+      ),
+    onSuccess: async () => {
+      setQuizSelection(null);
+      await queryClient.invalidateQueries({ queryKey: interactionsKey });
     },
   });
   const data = session.data;
@@ -79,6 +130,16 @@ function LearningSessionPage() {
 
   const totalLessons = lessonCount(data.plan);
   const completedLessons = data.completed_lessons.length;
+  const currentQuiz = currentLesson
+    ? [...(interactions.data ?? [])]
+        .reverse()
+        .find((item) => item.lesson_id === currentLesson.lesson_id)
+    : undefined;
+  const selectedQuizOption =
+    currentQuiz?.selected_option ??
+    (quizSelection && quizSelection.interactionId === currentQuiz?.id
+      ? quizSelection.selectedOption
+      : null);
 
   return (
     <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[280px_minmax(0,1fr)] sm:px-8">
@@ -239,6 +300,109 @@ function LearningSessionPage() {
                     </section>
                   )}
                 </>
+              )}
+            </section>
+            <section className="mt-7 rounded-2xl border border-indigo-100 bg-indigo-50/50 p-6">
+              <h3 className="text-xl font-semibold text-slate-950">
+                Practice this lesson
+              </h3>
+              <p className="mt-2 text-slate-600">
+                Check your understanding with a question based on this lesson.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  answerQuiz.reset();
+                  setQuizSelection(null);
+                  generateQuiz.mutate();
+                }}
+                disabled={generateQuiz.isPending}
+                className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {generateQuiz.isPending
+                  ? "Preparing a question…"
+                  : currentQuiz
+                    ? "Try another question"
+                    : "Quiz me"}
+              </button>
+              {generateQuiz.isError && (
+                <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-red-800">
+                  {generateQuiz.error.message}
+                </p>
+              )}
+              {interactions.isError && (
+                <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-red-800">
+                  {interactions.error.message}
+                </p>
+              )}
+              {currentQuiz && (
+                <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5">
+                  <h4 className="font-semibold leading-7 text-slate-950">
+                    {currentQuiz.question}
+                  </h4>
+                  <fieldset className="mt-4 space-y-3">
+                    <legend className="sr-only">Choose your answer</legend>
+                    {currentQuiz.options.map((option, index) => (
+                      <label
+                        key={`${currentQuiz.id}-${index}`}
+                        className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:border-indigo-300"
+                      >
+                        <input
+                          type="radio"
+                          name={`quiz-${currentQuiz.id}`}
+                          checked={selectedQuizOption === index}
+                          disabled={currentQuiz.selected_option !== null || answerQuiz.isPending}
+                          onChange={() =>
+                            setQuizSelection({
+                              interactionId: currentQuiz.id,
+                              selectedOption: index,
+                            })
+                          }
+                          className="mt-1 accent-indigo-600"
+                        />
+                        <span className="text-slate-700">{option}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  {currentQuiz.selected_option === null && (
+                    <>
+                      {answerQuiz.isError && (
+                        <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-red-800">
+                          {answerQuiz.error.message}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedQuizOption !== null) {
+                            answerQuiz.mutate({
+                              interactionId: currentQuiz.id,
+                              selectedOption: selectedQuizOption,
+                            });
+                          }
+                        }}
+                        disabled={selectedQuizOption === null || answerQuiz.isPending}
+                        className="mt-4 rounded-xl border border-indigo-600 px-5 py-2.5 font-semibold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {answerQuiz.isPending ? "Checking…" : "Check answer"}
+                      </button>
+                    </>
+                  )}
+                  {currentQuiz.selected_option !== null && (
+                    <div
+                      className={`mt-4 rounded-xl p-4 ${
+                        currentQuiz.is_correct
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "bg-amber-50 text-amber-900"
+                      }`}
+                    >
+                      <p className="font-semibold">
+                        {currentQuiz.is_correct ? "Correct!" : "Not quite."}
+                      </p>
+                      <p className="mt-2 leading-7">{currentQuiz.explanation}</p>
+                    </div>
+                  )}
+                </div>
               )}
             </section>
             <section className="mt-7 rounded-2xl border border-indigo-100 p-5">
