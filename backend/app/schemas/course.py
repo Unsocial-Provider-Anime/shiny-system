@@ -114,3 +114,18 @@ class CourseDraftProposal(StrictModel):
     description: NonEmptyText
     default_presentation_format: PresentationFormat = "text-and-images"
     plan: CoursePlan
+
+
+class CourseUpdateRequest(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    description: NonEmptyText | None = None
+    default_presentation_format: PresentationFormat | None = None
+    plan: CoursePlan | None = None
+
+    @model_validator(mode="after")
+    def require_update_fields(self) -> "CourseUpdateRequest":
+        if not self.model_fields_set:
+            raise ValueError("at least one field must be provided")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("provided update fields cannot be null")
+        return self

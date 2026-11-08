@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends
 from starlette.middleware.sessions import SessionMiddleware
 from supabase import Client
 from app.database.supabase import get_supabase_client
+from app.api.courses import router as courses_router
 from typing import Annotated
 
 session_secret = os.getenv("SESSION_SECRET")
@@ -13,6 +14,7 @@ if not session_secret:
 app_environment = os.getenv("APP_ENV", "development").lower()
 
 app = FastAPI()
+app.include_router(courses_router)
 app.add_middleware(
     SessionMiddleware,
     secret_key=session_secret,
