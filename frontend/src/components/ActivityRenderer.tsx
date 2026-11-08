@@ -340,9 +340,10 @@ export function ActivityRenderer({ activity, sessionId }: Props) {
               >
                 {codingAnswer.data.message}
               </p>
-              <p className="mt-3 leading-7 text-slate-700">
-                {activity.content.explanation}
-              </p>
+              <MarkdownRenderer
+                className="mt-3"
+                content={activity.content.explanation}
+              />
               {!codingAnswer.data.is_correct && (
                 <button
                   type="button"
