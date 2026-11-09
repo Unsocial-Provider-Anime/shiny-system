@@ -16,6 +16,10 @@ row's numeric ID for course ownership and learning sessions. The email-only
 sign-in does not verify control of the email address, so it is for a trusted
 prototype only and is not suitable for production accounts or sensitive data.
 Set a long, random `SESSION_SECRET` and use HTTPS outside development.
+Set `DAILY_TOKEN_LIMIT` to the per-user token budget for a rolling 24-hour
+window (default `20000`). Apply migration `00010_user_token_usage.sql` to enable
+the limit; generation requests return HTTP 429 with the reset time when the
+remaining budget cannot cover the request.
 
 ## Course sharing
 

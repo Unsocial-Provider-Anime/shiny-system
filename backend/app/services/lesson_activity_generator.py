@@ -15,6 +15,7 @@ from app.services.course_generator import (
     ProviderConfigurationError,
 )
 from app.services.openai_client import OpenAIModel, get_openai_client
+from app.services.token_usage import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ def generate_lesson_activity(
     presentation_format: PresentationFormat = "text-and-images",
     action: LessonActivityAction = "teach",
     question: str | None = None,
+    user_id: int | None = None,
+    database: object | None = None,
 ) -> GeneratedLessonActivity:
     provider = os.getenv("AI_PROVIDER", "deepseek")
     try:
@@ -69,7 +72,10 @@ def generate_lesson_activity(
             "configured-test-model",
         )
 
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        client,
+        database,
+        user_id,
         model=model_name,
         messages=[
             {

@@ -11,6 +11,7 @@ from app.services.course_generator import (
     ProviderConfigurationError,
 )
 from app.services.openai_client import OpenAIModel, get_openai_client
+from app.services.token_usage import create_chat_completion
 
 
 def generate_quiz(
@@ -18,6 +19,9 @@ def generate_quiz(
     module: ModulePlan,
     lesson: LessonPlan,
     client: OpenAI | None = None,
+    *,
+    user_id: int | None = None,
+    database: object | None = None,
 ) -> GeneratedQuiz:
     provider = os.getenv("AI_PROVIDER", "deepseek")
     try:
@@ -38,7 +42,10 @@ def generate_quiz(
             "configured-test-model",
         )
 
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        client,
+        database,
+        user_id,
         model=model_name,
         messages=[
             {

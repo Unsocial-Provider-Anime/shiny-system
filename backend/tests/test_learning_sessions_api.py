@@ -481,6 +481,8 @@ class LearningSessionApiTests(unittest.TestCase):
                 "presentation_format": "slides-based",
                 "action": "answer-question",
                 "question": "Why use assertions?",
+                "user_id": 42,
+                "database": database,
             },
         )
 

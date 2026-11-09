@@ -29,6 +29,7 @@ from app.services.course_generator import (
 )
 from app.services.lesson_activity_generator import generate_lesson_activity
 from app.services.quiz_generator import generate_quiz
+from app.services.token_usage import TokenLimitExceeded
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/learning-sessions", tags=["learning sessions"])
@@ -494,7 +495,18 @@ def create_lesson_activity(
             ),
             action=generation_request.action,
             question=generation_request.question,
+            user_id=user_id,
+            database=database,
         )
+    except TokenLimitExceeded as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "daily_token_limit_reached",
+                "message": "Your daily AI token limit has been reached.",
+                "reset_at": error.reset_at,
+            },
+        ) from error
     except ProviderConfigurationError as error:
         logger.error("Lesson activity generation is not configured: %s", error)
         raise HTTPException(
@@ -765,7 +777,22 @@ def create_learning_interaction(
         raise HTTPException(status_code=409, detail="This lesson is not in the course.")
 
     try:
-        quiz = generate_quiz(course["title"], target_module, target_lesson)
+        quiz = generate_quiz(
+            course["title"],
+            target_module,
+            target_lesson,
+            user_id=user_id,
+            database=database,
+        )
+    except TokenLimitExceeded as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "daily_token_limit_reached",
+                "message": "Your daily AI token limit has been reached.",
+                "reset_at": error.reset_at,
+            },
+        ) from error
     except ProviderConfigurationError as error:
         logger.error("Quiz generation is not configured: %s", error)
         raise HTTPException(

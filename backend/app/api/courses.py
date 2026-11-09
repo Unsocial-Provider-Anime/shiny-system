@@ -18,6 +18,7 @@ from app.services.course_generator import (
     ProviderConfigurationError,
     generate_course_draft,
 )
+from app.services.token_usage import TokenLimitExceeded
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["courses"])
@@ -188,10 +189,20 @@ def _call_save_draft(
 @router.post("/course-drafts", response_model=CourseDraftProposal)
 def create_course_draft(
     request: CourseDraftRequest,
-    _user_id: AuthenticatedUser,
+    user_id: AuthenticatedUser,
+    database: Database,
 ) -> CourseDraftProposal:
     try:
-        return generate_course_draft(request)
+        return generate_course_draft(request, database=database, user_id=user_id)
+    except TokenLimitExceeded as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "daily_token_limit_reached",
+                "message": "Your daily AI token limit has been reached.",
+                "reset_at": error.reset_at,
+            },
+        ) from error
     except ProviderConfigurationError as error:
         logger.error("Course generation is not configured: %s", error)
         raise HTTPException(

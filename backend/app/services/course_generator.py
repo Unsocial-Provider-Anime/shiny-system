@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.schemas.course import CourseDraftProposal, CourseDraftRequest
 from app.services.openai_client import OpenAIModel, get_openai_client
+from app.services.token_usage import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ class ProviderConfigurationError(CourseGenerationError):
 def generate_course_draft(
     request: CourseDraftRequest,
     client: OpenAI | None = None,
+    *,
+    database: object | None = None,
+    user_id: int | None = None,
 ) -> CourseDraftProposal:
     provider = os.getenv("AI_PROVIDER", "deepseek")
     try:
@@ -42,7 +46,10 @@ def generate_course_draft(
             "configured-test-model",
         )
 
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        client,
+        database,
+        user_id,
         model=model_name,
         messages=[
             {
